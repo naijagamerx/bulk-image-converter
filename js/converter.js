@@ -94,21 +94,6 @@ const formatHandlers = {
     }
 };
 
-// Modal handling
-const modalHandlers = {
-    showModal() {
-        const aboutModal = document.getElementById('aboutModal');
-        aboutModal.classList.add('show');
-        document.body.style.overflow = 'hidden';
-    },
-
-    hideModal() {
-        const aboutModal = document.getElementById('aboutModal');
-        aboutModal.classList.remove('show');
-        document.body.style.overflow = '';
-    }
-};
-
 // Preview handling
 const previewHandlers = {
     displayFilePreviews(files, previewArea) {
@@ -116,8 +101,13 @@ const previewHandlers = {
         
         if (files.length === 0) {
             previewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-arrow-up-from-bracket mr-2"></i> Select images to see previews.</p>';
+            previewArea.classList.remove('has-items');
             return;
         }
+
+        previewArea.classList.add('has-items');
+        let loadedImages = 0;
+        const totalImages = files.length;
 
         files.forEach(file => {
             const reader = new FileReader();
@@ -126,8 +116,21 @@ const previewHandlers = {
                 img.src = e.target.result;
                 img.alt = `Preview of ${file.name}`;
                 img.title = file.name;
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
-                previewArea.appendChild(img);
+                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300');
+                
+                img.onload = () => {
+                    loadedImages++;
+                    img.classList.remove('opacity-0');
+                    if (loadedImages === totalImages) {
+                        previewArea.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                };
+                
+                const wrapper = document.createElement('div');
+                wrapper.className = 'animate-fade-in';
+                wrapper.style.animationDelay = `${loadedImages * 0.1}s`;
+                wrapper.appendChild(img);
+                previewArea.appendChild(wrapper);
             };
             reader.readAsDataURL(file);
         });
@@ -192,6 +195,31 @@ const converter = {
             reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
             reader.readAsDataURL(file);
         });
+    }
+};
+
+// Modal handling
+const modalHandlers = {
+    showModal() {
+        const aboutModal = document.getElementById('aboutModal');
+        const modalContent = aboutModal.querySelector('.modal-content');
+        
+        aboutModal.classList.add('show');
+        document.body.style.overflow = 'hidden';
+        
+        // Center modal on mobile
+        if (window.innerWidth < 640) {
+            modalContent.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+        }
+    },
+
+    hideModal() {
+        const aboutModal = document.getElementById('aboutModal');
+        aboutModal.classList.remove('show');
+        document.body.style.overflow = '';
     }
 };
 

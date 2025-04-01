@@ -2,6 +2,7 @@
 body {
     font-family: 'Inter', sans-serif;
     overflow-x: hidden;
+    scroll-behavior: smooth;
 }
 
 /* Progress bar styles */
@@ -77,32 +78,92 @@ button:disabled {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     background-color: rgba(0,0,0,0.5);
     z-index: 50;
     opacity: 0;
     transition: opacity 0.3s ease;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .modal.show {
     display: flex;
     opacity: 1;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal > div {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
 }
 
 .modal-content {
     background-color: white;
     border-radius: 12px;
-    max-width: 90%;
-    width: 600px;
-    max-height: 90vh;
-    overflow-y: auto;
+    width: min(600px, 90%);
+    max-width: 90vw;
+    margin: auto;
+    position: relative;
     transform: scale(0.9);
-    transition: transform 0.3s ease;
+    transition: all 0.3s ease;
+    max-height: min(90vh, 600px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59, 130, 246, 0.5) rgba(229, 231, 235, 0.5);
+}
+
+.modal-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.modal-content::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.5);
+    border-radius: 4px;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+    background-color: rgba(59, 130, 246, 0.5);
+    border-radius: 4px;
 }
 
 .modal.show .modal-content {
     transform: scale(1);
+}
+
+/* Smooth scrolling containers */
+.preview-grid {
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59, 130, 246, 0.5) rgba(229, 231, 235, 0.5);
+    transition: height 0.3s ease;
+}
+
+.preview-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.preview-grid::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.5);
+    border-radius: 4px;
+}
+
+.preview-grid::-webkit-scrollbar-thumb {
+    background-color: rgba(59, 130, 246, 0.5);
+    border-radius: 4px;
+}
+
+/* Dynamic height for preview areas */
+.preview-grid.has-items {
+    height: auto !important;
+    max-height: 80vh;
+    min-height: 150px;
 }
 
 /* Animations */
