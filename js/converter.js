@@ -2,7 +2,37 @@
 const state = {
     selectedFiles: [],
     convertedBlobs: [],
-    previewUrls: []
+    previewUrls: [],
+    currentPreviewIndex: 0
+};
+
+// Theme handling
+const themeHandlers = {
+    init() {
+        // Check for saved theme preference or use system preference
+        const savedTheme = localStorage.getItem('theme');
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        
+        if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            document.getElementById('themeToggle')?.classList.add('dark');
+        }
+    },
+
+    toggle() {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const themeToggle = document.getElementById('themeToggle');
+        
+        if (isDark) {
+            document.documentElement.removeAttribute('data-theme');
+            localStorage.setItem('theme', 'light');
+            themeToggle?.classList.remove('dark');
+        } else {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            localStorage.setItem('theme', 'dark');
+            themeToggle?.classList.add('dark');
+        }
+    }
 };
 
 // Utility functions
@@ -70,6 +100,51 @@ const utils = {
     }
 };
 
+// Full-screen preview handler
+const fullScreenPreview = {
+    show(imgElement) {
+        if (!imgElement) return;
+        
+        const fullScreenContainer = document.getElementById('fullScreenPreview');
+        const fullScreenImage = document.getElementById('fullScreenImage');
+        
+        // Find all images in the current preview container and determine index
+        const container = imgElement.closest('.preview-grid');
+        if (!container) return;
+        
+        const allImages = Array.from(container.querySelectorAll('img'));
+        state.currentPreviewIndex = allImages.indexOf(imgElement);
+        
+        // Set the image source and show the container
+        fullScreenImage.src = imgElement.src;
+        fullScreenContainer.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+    },
+    
+    close() {
+        const fullScreenContainer = document.getElementById('fullScreenPreview');
+        fullScreenContainer.classList.add('hidden');
+        document.body.style.overflow = '';
+    },
+    
+    navigate(direction) {
+        const container = document.querySelector('.preview-grid.has-items');
+        if (!container) return;
+        
+        const allImages = Array.from(container.querySelectorAll('img'));
+        if (allImages.length === 0) return;
+        
+        state.currentPreviewIndex += direction;
+        
+        // Wrap around if needed
+        if (state.currentPreviewIndex < 0) state.currentPreviewIndex = allImages.length - 1;
+        if (state.currentPreviewIndex >= allImages.length) state.currentPreviewIndex = 0;
+        
+        const fullScreenImage = document.getElementById('fullScreenImage');
+        fullScreenImage.src = allImages[state.currentPreviewIndex].src;
+    }
+};
+
 // Format handling
 const formatHandlers = {
     updateFileInputAccept() {
@@ -116,7 +191,10 @@ const previewHandlers = {
                 img.src = e.target.result;
                 img.alt = `Preview of ${file.name}`;
                 img.title = file.name;
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300');
+                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300', 'cursor-pointer');
+                
+                // Add click event for full screen preview
+                img.addEventListener('click', () => fullScreenPreview.show(img));
                 
                 img.onload = () => {
                     loadedImages++;
@@ -225,6 +303,33 @@ const modalHandlers = {
 
 // Event handlers setup
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize theme
+    themeHandlers.init();
+    
+    // Theme toggle
+    const themeToggleBtn = document.getElementById('themeToggle');
+    themeToggleBtn?.addEventListener('click', themeHandlers.toggle);
+    
+    // Full screen preview handlers
+    const closePreviewBtn = document.getElementById('closePreviewBtn');
+    const prevImageBtn = document.getElementById('prevImageBtn');
+    const nextImageBtn = document.getElementById('nextImageBtn');
+    
+    closePreviewBtn?.addEventListener('click', fullScreenPreview.close);
+    prevImageBtn?.addEventListener('click', () => fullScreenPreview.navigate(-1));
+    nextImageBtn?.addEventListener('click', () => fullScreenPreview.navigate(1));
+    
+    // Close full screen with Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            fullScreenPreview.close();
+        } else if (e.key === 'ArrowLeft') {
+            fullScreenPreview.navigate(-1);
+        } else if (e.key === 'ArrowRight') {
+            fullScreenPreview.navigate(1);
+        }
+    });
+
     // Format selection handlers
     const inputFormatRadios = document.getElementsByName('inputFormat');
     const outputFormatRadios = document.getElementsByName('outputFormat');
