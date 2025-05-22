@@ -160,11 +160,22 @@ const formatHandlers = {
         const qualityContainer = document.getElementById('qualitySlider').parentElement;
         const qualityLabel = document.getElementById('qualityLabel');
         
-        if (selectedFormat === 'image/png') {
+        // Formats for which the quality slider should be hidden
+        const formatsToHideSlider = ['image/png', 'image/gif', 'image/tiff', 'application/pdf'];
+
+        if (formatsToHideSlider.includes(selectedFormat)) {
             qualityContainer.style.display = 'none';
         } else {
             qualityContainer.style.display = 'block';
-            qualityLabel.textContent = selectedFormat === 'image/jpeg' ? 'JPEG Quality:' : 'WebP Quality:';
+            // Only JPEG and WEBP currently support quality adjustment in this app
+            if (selectedFormat === 'image/jpeg') {
+                qualityLabel.textContent = 'JPEG Quality:';
+            } else if (selectedFormat === 'image/webp') {
+                qualityLabel.textContent = 'WebP Quality:';
+            } else {
+                // Fallback for any other formats that might unexpectedly show the slider
+                qualityContainer.style.display = 'none';
+            }
         }
     }
 };
@@ -221,7 +232,14 @@ const converter = {
         const renamingPattern = document.getElementById('renamingPattern');
         const outputFormatRadios = document.getElementsByName('outputFormat');
         const pattern = renamingPattern.value || '{original}';
-        const ext = Array.from(outputFormatRadios).find(radio => radio.checked).value.split('/')[1];
+        let ext = Array.from(outputFormatRadios).find(radio => radio.checked).value.split('/')[1];
+        
+        // Ensure correct extension for tiff, can be .tif or .tiff
+        if (ext === 'tiff') {
+            ext = 'tiff'; // Keep it simple, use .tiff
+        }
+        // For PDF, it's application/pdf, so split will give 'pdf'
+        
         const now = new Date();
         
         let filename = pattern
@@ -235,42 +253,195 @@ const converter = {
 
     convertImage(file, quality, index) {
         return new Promise((resolve, reject) => {
+            const inputFormatRadios = document.getElementsByName('inputFormat');
+            const selectedInputFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
+
+            if (selectedInputFormat === 'application/pdf' || file.type === 'application/pdf') {
+                const message = `PDF input is not supported for: ${file.name}`;
+                utils.displayMessage(message);
+                console.warn(message);
+                return reject(new Error(message));
+            }
+
             const reader = new FileReader();
             const outputFormatRadios = document.getElementsByName('outputFormat');
             const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
 
             reader.onload = function(event) {
                 const img = new Image();
-                img.onload = function() {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    
-                    if (outputFormat === 'image/jpeg') {
-                        ctx.fillStyle = '#FFFFFF';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    }
-                    
-                    ctx.drawImage(img, 0, 0);
-                    
-                    canvas.toBlob(
-                        (blob) => {
-                            if (blob) {
+                img.onload = async function() { // Changed to async function
+                    try { // Added try block for general error handling including PDF
+                        if (outputFormat === 'application/pdf') {
+                            // Ensure jsPDF is loaded
+                            if (typeof jspdf === 'undefined' || typeof jspdf.jsPDF === 'undefined') {
+                                const errorMsg = 'jsPDF library is not loaded. Cannot convert to PDF.';
+                                console.error(errorMsg);
+                                utils.displayMessage(errorMsg);
+                                return reject(new Error(errorMsg));
+                            }
+
+                            const canvasForPdf = document.createElement('canvas');
+                            canvasForPdf.width = img.width;
+                            canvasForPdf.height = img.height;
+                            const ctxPdf = canvasForPdf.getContext('2d');
+                            ctxPdf.drawImage(img, 0, 0);
+
+                            // A4 page size in points (approx 210mm x 297mm)
+                            // Default jsPDF unit is 'pt'
+                            const pdfPageWidth = 595.28;
+                            const pdfPageHeight = 841.89;
+                            let imgWidthPdf = canvasForPdf.width;
+                            let imgHeightPdf = canvasForPdf.height;
+
+                            // Scale image to fit within page dimensions while maintaining aspect ratio
+                            if (imgWidthPdf > pdfPageWidth || imgHeightPdf > pdfPageHeight) {
+                                const widthRatio = pdfPageWidth / imgWidthPdf;
+                                const heightRatio = pdfPageHeight / imgHeightPdf;
+                                const scale = Math.min(widthRatio, heightRatio);
+                                imgWidthPdf *= scale;
+                                imgHeightPdf *= scale;
+                            }
+                            
+                            // Center image on page (optional)
+                            const xOffset = (pdfPageWidth - imgWidthPdf) / 2;
+                            const yOffset = (pdfPageHeight - imgHeightPdf) / 2;
+
+                            const pdf = new jspdf.jsPDF({
+                                orientation: imgWidthPdf > imgHeightPdf ? 'landscape' : 'portrait',
+                                unit: 'pt',
+                                format: 'a4'
+                            });
+                            
+                            // Use a PNG data URL for better compatibility with jsPDF
+                            const imgDataUrl = canvasForPdf.toDataURL('image/png');
+                            pdf.addImage(imgDataUrl, 'PNG', xOffset, yOffset, imgWidthPdf, imgHeightPdf);
+                            
+                            const blob = pdf.output('blob');
+                            const newName = converter.generateOutputFilename(file.name, index);
+                            return resolve({ blob: blob, originalName: newName });
+                        }
+
+                        // Common canvas setup for all non-PDF conversions
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0); // Draw the image onto this canvas once
+
+                        if (outputFormat === 'image/gif') {
+                            if (typeof GIF === 'undefined') {
+                                const errorMsg = 'gif.js library is not loaded. Cannot convert to GIF.';
+                                console.error(errorMsg);
+                                utils.displayMessage(errorMsg);
+                                return reject(new Error(errorMsg));
+                            }
+
+                            const gif = new GIF({
+                                workers: 2, // Number of workers
+                                quality: 10, // Lower is better, 1-30. Default is 10.
+                                workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+                            });
+
+                            gif.addFrame(canvas, { delay: 200 }); // Add the canvas context directly
+
+                            gif.on('finished', function(blob) {
                                 const newName = converter.generateOutputFilename(file.name, index);
                                 resolve({ blob: blob, originalName: newName });
-                            } else {
-                                reject(new Error('Canvas to Blob conversion failed'));
+                            });
+                            
+                            gif.on('error', function(err) {
+                                const errorMsg = `Error generating GIF for ${file.name}: ${err}`;
+                                console.error(errorMsg, err);
+                                utils.displayMessage(errorMsg);
+                                reject(new Error(errorMsg));
+                            });
+
+                            gif.render();
+
+                        } else { // Handle other formats (PNG, JPEG, WEBP, TIFF - though TIFF is problematic)
+                            // Set white background for JPEG as it doesn't support transparency
+                            // This needs to be done on the main canvas if it's JPEG
+                            if (outputFormat === 'image/jpeg') {
+                                // Create a temporary canvas to draw with white background for JPEG
+                                const jpegCanvas = document.createElement('canvas');
+                                jpegCanvas.width = img.width;
+                                jpegCanvas.height = img.height;
+                                const jpegCtx = jpegCanvas.getContext('2d');
+                                jpegCtx.fillStyle = '#FFFFFF';
+                                jpegCtx.fillRect(0, 0, jpegCanvas.width, jpegCanvas.height);
+                                jpegCtx.drawImage(img, 0, 0); // Draw the original image on top of white
+                                
+                                canvas.width = jpegCanvas.width; // Not strictly needed as it's already set from img
+                                canvas.height = jpegCanvas.height;
+                                ctx.drawImage(jpegCanvas,0,0); // copy temp canvas to main canvas
                             }
-                        },
-                        outputFormat,
-                        outputFormat === 'image/png' ? undefined : quality
-                    );
+
+
+                            let qualityArgument;
+                            if (outputFormat === 'image/jpeg' || outputFormat === 'image/webp') {
+                                qualityArgument = quality;
+                            }
+
+                            if (outputFormat === 'image/tiff') {
+                                if (typeof UTIF === 'undefined') {
+                                    const errorMsg = 'UTIF.js library is not loaded. Cannot convert to TIFF.';
+                                    console.error(errorMsg);
+                                    utils.displayMessage(errorMsg);
+                                    return reject(new Error(errorMsg));
+                                }
+                                try {
+                                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                    // UTIF.encodeImage expects RGBA data as an ArrayBuffer
+                                    const ifd0 = UTIF.encodeImage(imageData.data.buffer, canvas.width, canvas.height);
+                                    // UTIF.encode expects an array of IFDs (ArrayBuffers)
+                                    const tiffArrayBuffer = UTIF.encode([ifd0]); 
+                                    const tiffBlob = new Blob([tiffArrayBuffer], { type: 'image/tiff' });
+                                    const newName = converter.generateOutputFilename(file.name, index);
+                                    resolve({ blob: tiffBlob, originalName: newName });
+                                } catch (tiffError) {
+                                    const errorMsg = `Error generating TIFF for ${file.name}: ${tiffError.message}`;
+                                    console.error(errorMsg, tiffError);
+                                    utils.displayMessage(errorMsg);
+                                    reject(new Error(errorMsg));
+                                }
+                            } else { // For PNG, JPEG, WEBP
+                                canvas.toBlob(
+                                    (blob) => {
+                                        if (blob) {
+                                            const newName = converter.generateOutputFilename(file.name, index);
+                                            resolve({ blob: blob, originalName: newName });
+                                        } else {
+                                            const errorMsg = `Canvas to Blob conversion failed for ${file.name} to ${outputFormat}`;
+                                            console.error(errorMsg);
+                                            reject(new Error(errorMsg));
+                                        }
+                                    },
+                                    outputFormat,
+                                    qualityArgument
+                                );
+                            }
+                        }
+                    } catch (error) { // Catch errors from PDF, GIF, or other steps
+                        const errorMsg = `Error during conversion for ${file.name} to ${outputFormat}: ${error.message}`;
+                        console.error(errorMsg, error);
+                        utils.displayMessage(errorMsg);
+                        reject(new Error(errorMsg));
+                    }
                 };
-                img.onerror = () => reject(new Error(`Failed to load image: ${file.name}`));
+                img.onerror = () => {
+                    const errorMsg = `Failed to load image: ${file.name}. It might be corrupted or an unsupported format.`;
+                    utils.displayMessage(errorMsg);
+                    console.error(errorMsg);
+                    reject(new Error(errorMsg));
+                };
                 img.src = event.target.result;
             };
-            reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+            reader.onerror = () => {
+                const errorMsg = `Failed to read file: ${file.name}`;
+                utils.displayMessage(errorMsg);
+                console.error(errorMsg);
+                reject(new Error(errorMsg));
+            };
             reader.readAsDataURL(file);
         });
     }
