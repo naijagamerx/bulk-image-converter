@@ -160,11 +160,22 @@ const formatHandlers = {
         const qualityContainer = document.getElementById('qualitySlider').parentElement;
         const qualityLabel = document.getElementById('qualityLabel');
         
-        if (selectedFormat === 'image/png') {
+        // Formats that don't typically use the quality slider in canvas.toBlob
+        const noQualityFormats = ['image/png', 'image/bmp', 'image/gif', 'image/tiff'];
+
+        if (noQualityFormats.includes(selectedFormat)) {
             qualityContainer.style.display = 'none';
         } else {
             qualityContainer.style.display = 'block';
-            qualityLabel.textContent = selectedFormat === 'image/jpeg' ? 'JPEG Quality:' : 'WebP Quality:';
+            // Only JPEG and WEBP are expected to have quality settings here
+            if (selectedFormat === 'image/jpeg') {
+                qualityLabel.textContent = 'JPEG Quality:';
+            } else if (selectedFormat === 'image/webp') {
+                qualityLabel.textContent = 'WebP Quality:';
+            } else {
+                // Fallback for any other potential format that might use quality
+                qualityLabel.textContent = 'Quality:';
+            }
         }
     }
 };
