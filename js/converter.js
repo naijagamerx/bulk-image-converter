@@ -151,7 +151,15 @@ const formatHandlers = {
         const inputFormatRadios = document.getElementsByName('inputFormat');
         const fileInput = document.getElementById('fileInput');
         const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
-        fileInput.accept = selectedFormat;
+
+        // Add new formats to accept attribute
+        if (selectedFormat === 'text/plain') {
+            fileInput.accept = 'text/plain';
+        } else if (selectedFormat === 'video/mp4') {
+            fileInput.accept = 'video/mp4';
+        } else {
+            fileInput.accept = selectedFormat; // Default for image formats
+        }
     },
 
     updateQualitySliderVisibility() {
@@ -160,7 +168,8 @@ const formatHandlers = {
         const qualityContainer = document.getElementById('qualitySlider').parentElement;
         const qualityLabel = document.getElementById('qualityLabel');
         
-        if (selectedFormat === 'image/png') {
+        // Hide quality slider for non-image formats
+        if (selectedFormat === 'image/png' || selectedFormat === 'text/plain' || selectedFormat === 'video/x-matroska') {
             qualityContainer.style.display = 'none';
         } else {
             qualityContainer.style.display = 'block';
@@ -181,36 +190,58 @@ const previewHandlers = {
         }
 
         previewArea.classList.add('has-items');
-        let loadedImages = 0;
-        const totalImages = files.length;
+        let loadedFiles = 0;
+        const totalFiles = files.length;
 
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = document.createElement('img');
-                img.src = e.target.result;
-                img.alt = `Preview of ${file.name}`;
-                img.title = file.name;
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300', 'cursor-pointer');
-                
-                // Add click event for full screen preview
-                img.addEventListener('click', () => fullScreenPreview.show(img));
-                
-                img.onload = () => {
-                    loadedImages++;
-                    img.classList.remove('opacity-0');
-                    if (loadedImages === totalImages) {
-                        previewArea.scrollTo({ top: 0, behavior: 'smooth' });
-                    }
+        files.forEach((file, index) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'animate-fade-in';
+            wrapper.style.animationDelay = `${index * 0.1}s`;
+
+            if (file.type === 'text/plain') {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const pre = document.createElement('pre');
+                    pre.textContent = e.target.result.substring(0, 500); // Show first 500 chars
+                    pre.title = file.name;
+                    pre.classList.add('rounded-md', 'shadow-sm', 'p-2', 'bg-gray-50', 'dark:bg-gray-700', 'text-xs', 'overflow-y-auto', 'w-full', 'h-32', 'font-mono');
+                    wrapper.appendChild(pre);
+                    previewArea.appendChild(wrapper);
+                    loadedFiles++;
+                    if (loadedFiles === totalFiles) previewArea.scrollTo({ top: 0, behavior: 'smooth' });
                 };
-                
-                const wrapper = document.createElement('div');
-                wrapper.className = 'animate-fade-in';
-                wrapper.style.animationDelay = `${loadedImages * 0.1}s`;
-                wrapper.appendChild(img);
+                reader.readAsText(file);
+            } else if (file.type === 'video/mp4') {
+                const video = document.createElement('video');
+                const videoUrl = URL.createObjectURL(file);
+                state.previewUrls.push(videoUrl); // For later revocation
+                video.src = videoUrl;
+                video.controls = true;
+                video.title = file.name;
+                video.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
+                wrapper.appendChild(video);
                 previewArea.appendChild(wrapper);
-            };
-            reader.readAsDataURL(file);
+                loadedFiles++;
+                if (loadedFiles === totalFiles) previewArea.scrollTo({ top: 0, behavior: 'smooth' });
+            } else { // Assume image
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.alt = `Preview of ${file.name}`;
+                    img.title = file.name;
+                    img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300', 'cursor-pointer');
+                    img.addEventListener('click', () => fullScreenPreview.show(img));
+                    img.onload = () => {
+                        img.classList.remove('opacity-0');
+                        loadedFiles++;
+                        if (loadedFiles === totalFiles) previewArea.scrollTo({ top: 0, behavior: 'smooth' });
+                    };
+                    wrapper.appendChild(img);
+                    previewArea.appendChild(wrapper);
+                };
+                reader.readAsDataURL(file);
+            }
         });
     }
 };
@@ -221,7 +252,18 @@ const converter = {
         const renamingPattern = document.getElementById('renamingPattern');
         const outputFormatRadios = document.getElementsByName('outputFormat');
         const pattern = renamingPattern.value || '{original}';
-        const ext = Array.from(outputFormatRadios).find(radio => radio.checked).value.split('/')[1];
+        const selectedOutputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+        let ext;
+
+        // Determine extension based on output format
+        if (selectedOutputFormat === 'text/plain') {
+            ext = 'txt';
+        } else if (selectedOutputFormat === 'video/x-matroska') {
+            ext = 'mkv';
+        } else {
+            ext = selectedOutputFormat.split('/')[1]; // Default for image formats
+        }
+
         const now = new Date();
         
         let filename = pattern
@@ -233,14 +275,15 @@ const converter = {
         return `${filename}.${ext}`;
     },
 
-    convertImage(file, quality, index) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            const outputFormatRadios = document.getElementsByName('outputFormat');
-            const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+    convertFile(file, quality, index) {
+        const inputFormat = document.querySelector('input[name="inputFormat"]:checked').value;
+        const outputFormat = document.querySelector('input[name="outputFormat"]:checked').value;
 
-            reader.onload = function(event) {
-                const img = new Image();
+        if (outputFormat.startsWith('image/') && inputFormat.startsWith('image/')) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = new Image();
                 img.onload = function() {
                     const canvas = document.createElement('canvas');
                     canvas.width = img.width;
@@ -272,6 +315,37 @@ const converter = {
             };
             reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
             reader.readAsDataURL(file);
+            });
+        } else if (inputFormat === 'text/plain' && outputFormat === 'text/plain') {
+            return converter.convertText(file, index);
+        } else if (inputFormat === 'video/mp4' && outputFormat === 'video/x-matroska') {
+            return converter.convertVideo(file, index);
+        } else {
+            return Promise.reject(new Error(`Conversion from ${inputFormat} to ${outputFormat} is not supported.`));
+        }
+    },
+
+    convertText: function(file, index) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const textContent = event.target.result;
+                const textBlob = new Blob([textContent], { type: 'text/plain' });
+                const outputFileName = converter.generateOutputFilename(file.name, index);
+                resolve({ blob: textBlob, originalName: outputFileName });
+            };
+            reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+            reader.readAsText(file);
+        });
+    },
+
+    convertVideo: function(file, index) {
+        return new Promise((resolve, reject) => {
+            console.log(`Placeholder: MP4 to MKV conversion requested for ${file.name}`);
+            const outputFileName = converter.generateOutputFilename(file.name, index);
+            const emptyBlob = new Blob([], { type: 'video/x-matroska' });
+            utils.displayMessage(`Placeholder: MKV conversion for '${file.name}' is not yet implemented. A dummy file will be created.`, false);
+            resolve({ blob: emptyBlob, originalName: outputFileName });
         });
     }
 };
@@ -425,7 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (let i = 0; i < state.selectedFiles.length; i++) {
             try {
-                const result = await converter.convertImage(state.selectedFiles[i], quality, i);
+                const result = await converter.convertFile(state.selectedFiles[i], quality, i);
                 state.convertedBlobs.push(result);
                 utils.createIndividualDownloadLink(result.blob, result.originalName);
                 successful++;
@@ -438,18 +512,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const convertedPreviewArea = document.getElementById('convertedPreviewArea');
         if (successful > 0) {
-            convertedPreviewArea.innerHTML = '';
-            state.convertedBlobs.forEach(({ blob }) => {
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(blob);
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
-                convertedPreviewArea.appendChild(img);
+            convertedPreviewArea.innerHTML = ''; // Clear "Converting..." message
+            state.convertedBlobs.forEach(({ blob, originalName }) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'animate-fade-in';
+
+                if (blob.type === 'text/plain') {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const pre = document.createElement('pre');
+                        pre.textContent = e.target.result.substring(0, 500);
+                        pre.title = originalName;
+                        pre.classList.add('rounded-md', 'shadow-sm', 'p-2', 'bg-gray-50', 'dark:bg-gray-700', 'text-xs', 'overflow-y-auto', 'w-full', 'h-32', 'font-mono');
+                        wrapper.appendChild(pre);
+                        convertedPreviewArea.appendChild(wrapper);
+                    };
+                    reader.readAsText(blob);
+                } else if (blob.type.startsWith('video/')) {
+                    const video = document.createElement('video');
+                    const videoUrl = URL.createObjectURL(blob);
+                    state.previewUrls.push(videoUrl); // For later revocation
+                    video.src = videoUrl;
+                    video.controls = true;
+                    video.title = originalName;
+                    video.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
+                    wrapper.appendChild(video);
+                    convertedPreviewArea.appendChild(wrapper);
+                } else { // Assume image
+                    const img = document.createElement('img');
+                    const imgUrl = URL.createObjectURL(blob);
+                    state.previewUrls.push(imgUrl); // For later revocation
+                    img.src = imgUrl;
+                    img.alt = `Preview of ${originalName}`;
+                    img.title = originalName;
+                    img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
+                    img.addEventListener('click', () => fullScreenPreview.show(img)); // Allow full screen for converted images too
+                    wrapper.appendChild(img);
+                    convertedPreviewArea.appendChild(wrapper);
+                }
             });
             document.getElementById('downloadArea').classList.remove('hidden');
             downloadZipButton.disabled = false;
-            utils.displayMessage(`Successfully converted ${successful} of ${state.selectedFiles.length} images.`, false);
+            utils.displayMessage(`Successfully converted ${successful} of ${state.selectedFiles.length} files.`, false);
         } else {
-            convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No images were converted successfully.</p>';
+            convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No files were converted successfully.</p>';
         }
 
         convertButton.disabled = false;
