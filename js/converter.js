@@ -84,6 +84,12 @@ const utils = {
         const messageArea = document.getElementById('messageArea');
         messageArea.textContent = '';
         messageArea.classList.add('hidden');
+
+        // Disable convert button
+        const convertButton = document.getElementById('convertButton');
+        if (convertButton) {
+            convertButton.disabled = true;
+        }
     },
 
     createIndividualDownloadLink(blob, filename) {
@@ -150,15 +156,18 @@ const formatHandlers = {
     updateFileInputAccept() {
         const inputFormatRadios = document.getElementsByName('inputFormat');
         const fileInput = document.getElementById('fileInput');
-        const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
+        const selectedFormatValue = Array.from(inputFormatRadios).find(radio => radio.checked).value;
+        const fileInputHint = document.getElementById('fileInputHint');
 
-        // Add new formats to accept attribute
-        if (selectedFormat === 'text/plain') {
-            fileInput.accept = 'text/plain';
-        } else if (selectedFormat === 'video/mp4') {
-            fileInput.accept = 'video/mp4';
-        } else {
-            fileInput.accept = selectedFormat; // Default for image formats
+        fileInput.accept = selectedFormatValue; // Set the actual accept attribute
+
+        let readableFormat = selectedFormatValue.split('/')[1].toUpperCase();
+        if (selectedFormatValue === 'video/mp4') readableFormat = 'MP4';
+        else if (selectedFormatValue === 'text/plain') readableFormat = 'TXT';
+        // For image types, PNG, JPEG, WEBP is fine.
+
+        if (fileInputHint) {
+            fileInputHint.textContent = `Selected input format: ${readableFormat}. Ensure your files match this type.`;
         }
     },
 
@@ -202,7 +211,12 @@ const previewHandlers = {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const pre = document.createElement('pre');
-                    pre.textContent = e.target.result.substring(0, 500); // Show first 500 chars
+                    const fullText = e.target.result;
+                    let previewText = fullText.substring(0, 500);
+                    if (fullText.length > 500) {
+                        previewText += '\n... (file truncated for preview)';
+                    }
+                    pre.textContent = previewText;
                     pre.title = file.name;
                     pre.classList.add('rounded-md', 'shadow-sm', 'p-2', 'bg-gray-50', 'dark:bg-gray-700', 'text-xs', 'overflow-y-auto', 'w-full', 'h-32', 'font-mono');
                     wrapper.appendChild(pre);
@@ -340,12 +354,73 @@ const converter = {
     },
 
     convertVideo: function(file, index) {
-        return new Promise((resolve, reject) => {
-            console.log(`Placeholder: MP4 to MKV conversion requested for ${file.name}`);
-            const outputFileName = converter.generateOutputFilename(file.name, index);
-            const emptyBlob = new Blob([], { type: 'video/x-matroska' });
-            utils.displayMessage(`Placeholder: MKV conversion for '${file.name}' is not yet implemented. A dummy file will be created.`, false);
-            resolve({ blob: emptyBlob, originalName: outputFileName });
+        return new Promise(async (resolve, reject) => {
+            if (typeof FFmpeg === 'undefined' || typeof FFmpeg.createFFmpeg === 'undefined') {
+                utils.displayMessage('FFmpeg.js is not loaded. Video conversion unavailable.', true);
+                console.error('FFmpeg.js is not loaded.');
+                return reject(new Error('FFmpeg.js is not loaded.'));
+            }
+
+            const { createFFmpeg, fetchFile } = FFmpeg;
+            const ffmpeg = createFFmpeg({
+                log: true,
+                corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+            });
+
+            try {
+                utils.displayMessage(`Starting MKV conversion for '${file.name}'. This may take a while...`, false);
+
+                if (!ffmpeg.isLoaded()) {
+                    await ffmpeg.load();
+                }
+
+                ffmpeg.FS('writeFile', file.name, await fetchFile(file));
+
+                // Attempt to copy codecs first for speed.
+                // If this fails, one might try specific re-encoding, e.g., '-c:v libx264 -c:a aac'
+                // However, re-encoding is much slower and more CPU intensive.
+                await ffmpeg.run('-i', file.name, '-c', 'copy', 'output.mkv');
+
+                const data = ffmpeg.FS('readFile', 'output.mkv');
+                const outputBlob = new Blob([data.buffer], { type: 'video/x-matroska' });
+                const outputFileName = converter.generateOutputFilename(file.name, index);
+
+                utils.displayMessage(`Successfully converted '${file.name}' to MKV.`, false);
+                resolve({ blob: outputBlob, originalName: outputFileName });
+
+            } catch (error) {
+                console.error('FFmpeg conversion error:', error);
+                let userErrorMessage = `Error converting '${file.name}' to MKV. `;
+                if (error.message && error.message.includes("SharedArrayBuffer")) {
+                    userErrorMessage += "Browser configuration may be blocking SharedArrayBuffer, which is required for FFmpeg. Try enabling COOP/COEP headers on the server or specific browser flags.";
+                } else if (error.message) {
+                    userErrorMessage += error.message;
+                } else {
+                    userErrorMessage += 'Unknown error during conversion. Check console for details.';
+                }
+                utils.displayMessage(userErrorMessage, true);
+                reject(new Error(`FFmpeg conversion failed: ${error.message || 'Unknown error'}`));
+            } finally {
+                try {
+                    if (ffmpeg.FS) { // Check if FS is available, might not be if load failed.
+                        ffmpeg.FS('unlink', file.name);
+                        ffmpeg.FS('unlink', 'output.mkv');
+                    }
+                } catch (e) {
+                    // console.warn('Could not unlink files from FFmpeg FS:', e);
+                }
+                // Terminate FFmpeg instance to free up resources, especially if errors occurred.
+                // Note: Some FFmpeg.js versions/usage patterns might benefit from keeping the instance
+                // if multiple conversions are done rapidly, but for one-off it's safer to terminate.
+                // However, ensure this is done only if successfully loaded to avoid errors.
+                // For v0.11, `ffmpeg.exit()` is not standard; termination is usually for workers.
+                // The instance might self-terminate or clean up when it goes out of scope
+                // or if there's a specific terminate/exit method for the `createFFmpeg` object.
+                // Given the simple `createFFmpeg` usage, explicit termination might not be needed
+                // or could even cause issues if called incorrectly.
+                // Let's rely on browser GC for the ffmpeg object instance for now,
+                // as improper termination can be problematic.
+            }
         });
     }
 };
@@ -459,20 +534,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // File input handler
     fileInput.addEventListener('change', (event) => {
-        const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
-        state.selectedFiles = Array.from(event.target.files).filter(file => file.type === selectedFormat);
-        
-        utils.clearPreviewsAndResults();
+        // Get DOM elements that might be used, before any early returns or clearing operations
+        const currentInputFormatRadios = document.getElementsByName('inputFormat'); // Renamed to avoid conflict with outer scope var if any
+        const currentConvertButton = document.getElementById('convertButton');
+        const currentOriginalPreviewArea = document.getElementById('originalPreviewArea');
 
-        if (state.selectedFiles.length === 0 && event.target.files.length > 0) {
+        utils.clearPreviewsAndResults(); // Clears previews, results, and disables convertButton
+
+        const selectedFormat = Array.from(currentInputFormatRadios).find(radio => radio.checked).value;
+        const allFiles = Array.from(event.target.files);
+        state.selectedFiles = allFiles.filter(file => file.type === selectedFormat);
+
+        if (allFiles.length > 0 && state.selectedFiles.length === 0) {
+            // User selected files, but none matched the chosen format
             utils.displayMessage(`Please select ${selectedFormat.split('/')[1].toUpperCase()} files only.`);
+            // utils.clearPreviewsAndResults() already reset the preview area and disabled the button
             return;
         }
 
         if (state.selectedFiles.length > 0) {
-            previewHandlers.displayFilePreviews(state.selectedFiles, document.getElementById('originalPreviewArea'));
-            convertButton.disabled = false;
+            previewHandlers.displayFilePreviews(state.selectedFiles, currentOriginalPreviewArea);
+            if (currentConvertButton) currentConvertButton.disabled = false;
         }
+        // If state.selectedFiles.length is 0 (e.g., user de-selected files or selected no files),
+        // utils.clearPreviewsAndResults() has already set the correct UI state (empty preview, disabled button).
     });
 
     // Quality slider
@@ -493,35 +578,42 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">Converting...</p>';
         document.getElementById('progressArea').classList.remove('hidden');
         utils.updateProgress(0, state.selectedFiles.length);
+        convertButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Converting...';
 
         const quality = parseFloat(qualitySlider.value);
         let successful = 0;
 
-        for (let i = 0; i < state.selectedFiles.length; i++) {
-            try {
-                const result = await converter.convertFile(state.selectedFiles[i], quality, i);
-                state.convertedBlobs.push(result);
-                utils.createIndividualDownloadLink(result.blob, result.originalName);
-                successful++;
-                utils.updateProgress(i + 1, state.selectedFiles.length);
-            } catch (error) {
-                console.error('Conversion Error:', error);
-                utils.displayMessage(`Error converting ${state.selectedFiles[i].name}: ${error.message}`);
+        try {
+            for (let i = 0; i < state.selectedFiles.length; i++) {
+                try {
+                    const result = await converter.convertFile(state.selectedFiles[i], quality, i);
+                    state.convertedBlobs.push(result);
+                    utils.createIndividualDownloadLink(result.blob, result.originalName);
+                    successful++;
+                    utils.updateProgress(i + 1, state.selectedFiles.length);
+                } catch (error) {
+                    console.error('Conversion Error:', error);
+                    utils.displayMessage(`Error converting ${state.selectedFiles[i].name}: ${error.message}`);
+                }
             }
-        }
 
-        const convertedPreviewArea = document.getElementById('convertedPreviewArea');
-        if (successful > 0) {
-            convertedPreviewArea.innerHTML = ''; // Clear "Converting..." message
-            state.convertedBlobs.forEach(({ blob, originalName }) => {
-                const wrapper = document.createElement('div');
+            const convertedPreviewArea = document.getElementById('convertedPreviewArea');
+            if (successful > 0) {
+                convertedPreviewArea.innerHTML = ''; // Clear "Converting..." message
+                state.convertedBlobs.forEach(({ blob, originalName }) => {
+                    const wrapper = document.createElement('div');
                 wrapper.className = 'animate-fade-in';
 
                 if (blob.type === 'text/plain') {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         const pre = document.createElement('pre');
-                        pre.textContent = e.target.result.substring(0, 500);
+                        const fullText = e.target.result;
+                        let previewText = fullText.substring(0, 500);
+                        if (fullText.length > 500) {
+                            previewText += '\n... (file truncated for preview)';
+                        }
+                        pre.textContent = previewText;
                         pre.title = originalName;
                         pre.classList.add('rounded-md', 'shadow-sm', 'p-2', 'bg-gray-50', 'dark:bg-gray-700', 'text-xs', 'overflow-y-auto', 'w-full', 'h-32', 'font-mono');
                         wrapper.appendChild(pre);
@@ -554,11 +646,16 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('downloadArea').classList.remove('hidden');
             downloadZipButton.disabled = false;
             utils.displayMessage(`Successfully converted ${successful} of ${state.selectedFiles.length} files.`, false);
-        } else {
-            convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No files were converted successfully.</p>';
+            } else {
+                convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No files were converted successfully.</p>';
+            }
+        } catch (criticalError) {
+            console.error('A critical error occurred during the conversion process:', criticalError);
+            utils.displayMessage('A critical error occurred. Please check console or try again.', true);
+        } finally {
+            convertButton.disabled = false; // Re-enable button regardless of outcome
+            convertButton.innerHTML = '<i class="fas fa-cogs mr-2"></i>Convert Files';
         }
-
-        convertButton.disabled = false;
     });
 
     // Download ZIP handler

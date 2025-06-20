@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="css/styles.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
     <script src="js/converter.js" defer></script>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 p-4 md:p-8">
@@ -133,10 +134,69 @@
                 </div>
             </div>
 
+            <!-- Quality Slider Section -->
+            <div class="mb-4">
+                <label for="qualitySlider" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <span id="qualityLabel">JPEG/WebP Quality:</span> <span id="qualityValue">0.8</span>
+                </label>
+                <input type="range" id="qualitySlider" min="0.1" max="1" step="0.01" value="0.8" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700">
+            </div>
+
+            <!-- Renaming Pattern -->
+            <div class="mb-4">
+                <label for="renamingPattern" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Renaming Pattern:</label>
+                <input type="text" id="renamingPattern" placeholder="{original}_converted_{index}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {original}, {index}, {date}, {time}. Default: {original}</p>
+            </div>
+
+            <!-- Convert Button -->
+            <div class="my-6">
+                <button id="convertButton" disabled class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center text-lg">
+                    <i class="fas fa-cogs mr-2"></i>Convert Files
+                </button>
+            </div>
+
+            <!-- Preview Areas -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-2">Original Files</h3>
+                    <div id="originalPreviewArea" class="preview-grid bg-gray-50 dark:bg-gray-700 p-2 rounded border border-gray-200 dark:border-gray-600 min-h-[200px] flex flex-wrap gap-2 justify-center items-center">
+                        <p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-arrow-up-from-bracket mr-2"></i> Select files to see previews.</p>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-2">Converted Files</h3>
+                    <div id="convertedPreviewArea" class="preview-grid bg-gray-50 dark:bg-gray-700 p-2 rounded border border-gray-200 dark:border-gray-600 min-h-[200px] flex flex-wrap gap-2 justify-center items-center">
+                        <p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-wand-magic-sparkles mr-2"></i> Converted previews will appear here.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Area -->
+            <div id="progressArea" class="my-4 hidden">
+                <label for="progressBar" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Conversion Progress:</label>
+                <progress id="progressBar" value="0" max="100" class="w-full h-4 rounded-lg [&::-webkit-progress-bar]:rounded-lg [&::-webkit-progress-value]:rounded-lg   [&::-moz-progress-bar]:rounded-lg"></progress>
+                <p id="progressText" class="text-sm text-gray-600 dark:text-gray-400 mt-1 text-center"></p>
+            </div>
+
+            <!-- Message Area -->
+            <div id="messageArea" class="my-4 p-3 rounded-md hidden text-center"></div>
+
+            <!-- Download Area -->
+            <div id="downloadArea" class="my-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hidden">
+                <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-3">Download Your Files</h3>
+                <div id="individualLinksArea" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-4">
+                    <!-- Individual download links will be injected here -->
+                </div>
+                <button id="downloadZipButton" disabled class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center">
+                    <i class="fas fa-file-archive mr-2"></i>Download All as ZIP
+                </button>
+            </div>
+
             <!-- About modal -->
-        <div id="aboutModal" class="modal" aria-labelledby="modalTitle" role="dialog" aria-modal="true">
-            <div class="modal-wrapper">
-                <div class="modal-content bg-white dark:bg-gray-800 rounded-lg shadow-xl">
+            <div id="aboutModal" class="modal" aria-labelledby="modalTitle" role="dialog" aria-modal="true">
+                <div class="modal-wrapper">
+                    <div class="modal-content bg-white dark:bg-gray-800 rounded-lg shadow-xl">
                     <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
                         <h3 id="modalTitle" class="text-xl font-bold text-gray-800 dark:text-gray-200">About Bulk Image Converter Pro</h3>
                         <button id="closeModal" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
@@ -150,6 +210,20 @@
             </div>
         </div>
         </div>
+    </div>
+
+    <!-- Full Screen Preview -->
+    <div id="fullScreenPreview" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 hidden p-4">
+        <img id="fullScreenImage" src="" alt="Full screen preview" class="max-w-[90vw] max-h-[90vh] object-contain rounded-md shadow-lg">
+        <button id="closePreviewBtn" class="absolute top-4 right-4 text-white text-3xl hover:text-gray-300 transition-colors">
+            <i class="fas fa-times-circle"></i>
+        </button>
+        <button id="prevImageBtn" class="absolute left-4 top-1/2 -translate-y-1/2 text-white text-3xl hover:text-gray-300 transition-colors p-2 bg-black bg-opacity-30 rounded-full">
+            <i class="fas fa-chevron-circle-left"></i>
+        </button>
+        <button id="nextImageBtn" class="absolute right-4 top-1/2 -translate-y-1/2 text-white text-3xl hover:text-gray-300 transition-colors p-2 bg-black bg-opacity-30 rounded-full">
+            <i class="fas fa-chevron-circle-right"></i>
+        </button>
     </div>
 </body>
 </html>
