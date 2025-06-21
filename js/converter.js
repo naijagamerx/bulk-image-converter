@@ -461,17 +461,43 @@ const previewHandlers = {
                 
                 img.onload = () => {
                     loadedImages++;
-                    img.classList.remove('opacity-0');
-                    if (loadedImages === totalImages) {
-                        previewArea.scrollTo({ top: 0, behavior: 'smooth' });
+                    img.classList.remove('opacity-0'); // Make image visible
+                    if (loadedImages === totalImages && previewArea.parentElement) { // Ensure parent exists for scrolling
+                        previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                };
+                // Add error handling for individual image loading
+                img.onerror = () => {
+                    loadedImages++; // Still count as "processed" for scroll logic
+                    console.error(`Preview Error: Failed to load preview for ${file.name}`);
+                    const errorP = document.createElement('p');
+                    errorP.textContent = `Error loading ${file.name}`;
+                    errorP.className = 'text-xs text-red-500';
+                    wrapper.innerHTML = ''; // Clear the wrapper
+                    wrapper.appendChild(errorP); // Show error message in its place
+                    if (loadedImages === totalImages && previewArea.parentElement) {
+                        previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
                     }
                 };
                 
                 const wrapper = document.createElement('div');
-                wrapper.className = 'animate-fade-in';
-                wrapper.style.animationDelay = `${loadedImages * 0.1}s`;
+                // Animate fade-in if you have such a class defined elsewhere, or use opacity transition
+                // wrapper.className = 'animate-fade-in';
+                // wrapper.style.animationDelay = `${loadedImages * 0.05}s`; // Stagger if using CSS animation
                 wrapper.appendChild(img);
                 previewArea.appendChild(wrapper);
+            };
+            // Add error handling for FileReader itself
+            reader.onerror = () => {
+                loadedImages++; // Count as "processed"
+                console.error(`FileReader Error: Failed to read file ${file.name}`);
+                const errorP = document.createElement('p');
+                errorP.textContent = `Cannot read ${file.name}`;
+                errorP.className = 'text-xs text-red-500 col-span-full text-center'; // Make it span if grid column based
+                previewArea.appendChild(errorP); // Add error message to preview area
+                if (loadedImages === totalImages && previewArea.parentElement) {
+                     previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                }
             };
             reader.readAsDataURL(file);
         });
@@ -967,72 +993,83 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         // Modify file input handler:
-        // It should clear all previous state (selected files, converted blobs, previews)
-        // before processing the new selection.
-        if(fileInput) { // Ensure fileInput exists before adding listener
+        if(fileInput) {
             fileInput.addEventListener('change', (event) => {
-                utils.clearPreviewsAndResults(); // Full reset when new files are chosen via input.
                 const currentInputFormat = document.getElementById('inputFormatSelect').value;
+                const originalNumberOfFilesSelected = event.target.files.length;
                 const newFiles = Array.from(event.target.files).filter(file => file.type === currentInputFormat);
+                const dropZonePlaceholder = document.getElementById('dropZonePlaceholder'); // Get here for use in both branches
 
-                if (newFiles.length === 0 && event.target.files.length > 0) {
-                    utils.displayMessage(`Please select ${currentInputFormat.split('/')[1].toUpperCase()} files only.`);
-                // state.selectedFiles is already cleared by clearPreviewsAndResults
-                dropZonePlaceholder.classList.remove('hidden');
-                convertButton.disabled = true;
-                // previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Already shows placeholder due to empty selectedFiles
-                return;
-            }
+                if (newFiles.length === 0) {
+                    utils.clearPreviewsAndResults(); // Clear everything, including state.selectedFiles
+                    if (originalNumberOfFilesSelected > 0) { // Files were selected, but none matched the type
+                        utils.displayMessage(`Please select ${currentInputFormat.split('/')[1].toUpperCase()} files only.`);
+                    }
+                    // Ensure UI reflects no selection
+                    if (dropZonePlaceholder) dropZonePlaceholder.classList.remove('hidden');
+                    if (convertButton) convertButton.disabled = true;
+                    // originalPreviewArea is already reset by clearPreviewsAndResults
+                    return;
+                }
 
-            state.selectedFiles = newFiles; // Set the new selection
+                // Valid files are present
+                utils.clearPreviewsAndResults();    // Clear old state & previews
+                state.selectedFiles = newFiles;     // Assign new files to state
 
-            if (state.selectedFiles.length > 0) {
-                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
-                convertButton.disabled = false;
-                dropZonePlaceholder.classList.add('hidden');
-                utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
-            } else {
-                dropZonePlaceholder.classList.remove('hidden');
-                convertButton.disabled = true;
-                // previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Already shows placeholder
-            }
-        });
+                if (originalPreviewArea) { // Ensure element exists
+                    previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Display new previews
+                }
+
+                // Update other UI elements
+                if (convertButton) convertButton.disabled = false;
+                if (dropZonePlaceholder) dropZonePlaceholder.classList.add('hidden');
+                if (originalNumberOfFilesSelected > newFiles.length) { // Some files were filtered out
+                    utils.displayMessage(`${newFiles.length} valid file(s) selected. ${originalNumberOfFilesSelected - newFiles.length} file(s) ignored due to type mismatch.`, false);
+                } else {
+                    utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
+                }
+            });
+        }
 
         // Modify drop handler similarly
         dropZoneArea.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
+            const dropZonePlaceholder = document.getElementById('dropZonePlaceholder'); // Get here
 
-            utils.clearPreviewsAndResults(); // Full reset on new drop.
-
-            const droppedFiles = e.dataTransfer.files;
+            const originalNumberOfFilesDropped = e.dataTransfer.files.length;
             const currentInputFormat = document.getElementById('inputFormatSelect').value;
-            const newlySelectedFiles = Array.from(droppedFiles).filter(file => file.type === currentInputFormat);
+            const newlySelectedFiles = Array.from(e.dataTransfer.files).filter(file => file.type === currentInputFormat);
 
-            if (newlySelectedFiles.length === 0 && droppedFiles.length > 0) {
-                utils.displayMessage(`Please drop ${currentInputFormat.split('/')[1].toUpperCase()} files only. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored.`);
-                dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
-                dropZonePlaceholder.classList.remove('hidden');
-                convertButton.disabled = true;
+            if (newlySelectedFiles.length === 0) {
+                utils.clearPreviewsAndResults(); // Clear everything
+                if (originalNumberOfFilesDropped > 0) { // Files were dropped, but none matched
+                    utils.displayMessage(`Please drop ${currentInputFormat.split('/')[1].toUpperCase()} files only. ${originalNumberOfFilesDropped} file(s) were ignored.`);
+                }
+                if (dropZonePlaceholder) {
+                    dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                    dropZonePlaceholder.classList.remove('hidden');
+                }
+                if (convertButton) convertButton.disabled = true;
                 return;
             }
 
-            state.selectedFiles = newlySelectedFiles; // Set new selection
+            // Valid files are present
+            utils.clearPreviewsAndResults();    // Clear old state & previews
+            state.selectedFiles = newlySelectedFiles; // Assign new files to state
 
-            if (state.selectedFiles.length > 0) {
-                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
-                convertButton.disabled = false;
-                dropZonePlaceholder.classList.add('hidden');
+            if (originalPreviewArea) { // Ensure element exists
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Display new previews
+            }
+
+            // Update other UI elements
+            if (convertButton) convertButton.disabled = false;
+            if (dropZonePlaceholder) dropZonePlaceholder.classList.add('hidden');
+
+            if (originalNumberOfFilesDropped > newlySelectedFiles.length) {
+                 utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${originalNumberOfFilesDropped - newlySelectedFiles.length} file(s) ignored due to type mismatch.`, false);
+            } else {
                 utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
-
-                if (droppedFiles.length > newlySelectedFiles.length) {
-                     utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored as they were not ${selectedFormat.split('/')[1].toUpperCase()}.`, false);
-                }
-
-            } else { // No valid files dropped
-                dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
-                dropZonePlaceholder.classList.remove('hidden');
-                convertButton.disabled = true;
             }
         });
 

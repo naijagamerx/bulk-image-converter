@@ -46,16 +46,19 @@ describe('js/converter.js - Main Thread Utilities', () => {
   let mockInputFormatSelect;
   let mockOutputFormatSelect;
   let mockQualitySlider;
-  let mockQualityLabelContainer; // For the parent of qualitySlider and label
-  let mockQualityLabelItself; // For the label text
+  let mockQualityLabelContainer;
+  let mockQualityLabelItself;
   let mockConvertButton;
+  let mockDropZonePlaceholder; // Added for completeness
+
+  // For state access/mocking
+  let state;
+
 
   // Dynamically require converter.js to simulate its execution in jsdom
-  // This is a bit of a hack for non-module scripts.
-  // It's better if converter.js is structured as a module.
-  let utils, converter, state, formatHandlers, previewHandlers;
+  let utils, converter, formatHandlers, previewHandlers; // Removed 'state' from here
 
-  beforeAll(() => {
+  beforeEach(() => { // Changed from beforeAll to beforeEach for cleaner state per test
     // Set up a basic HTML structure that converter.js might expect
     document.body.innerHTML = `
       <div id="messageArea"></div>
@@ -64,8 +67,9 @@ describe('js/converter.js - Main Thread Utilities', () => {
       <div id="originalPreviewArea"></div>
       <div id="convertedPreviewArea"></div>
       <div id="individualLinksArea"></div>
-      <div id="downloadArea"></div>
-      <button id="downloadZipButton"></button>
+      <div id="downloadArea" class="hidden">
+        <button id="downloadZipButton" disabled></button>
+      </div>
       <input type="file" id="fileInput" />
       <input type="text" id="renamingPattern" value="{original}_{index}" />
       <div id="qualitySliderContainer">
@@ -85,7 +89,17 @@ describe('js/converter.js - Main Thread Utilities', () => {
         <option value="image/webp">WEBP</option>
         <option value="image/svg+xml">SVG</option>
       </select>
+      <div id="dropZonePlaceholder"></div>
     `;
+
+    // Reset state for each test
+    state = {
+        selectedFiles: [],
+        convertedBlobs: [],
+        previewUrls: [],
+        currentPreviewIndex: 0
+    };
+
 
     // Now that DOM is set up, load (execute) converter.js
     // This will attach its globals to `window` if that's how it's structured.
@@ -111,33 +125,109 @@ describe('js/converter.js - Main Thread Utilities', () => {
     mockInputFormatSelect = document.getElementById('inputFormatSelect');
     mockOutputFormatSelect = document.getElementById('outputFormatSelect');
     mockQualitySlider = document.getElementById('qualitySlider');
-    mockQualityLabelContainer = mockQualitySlider.parentElement; // Assuming label is sibling or parent
+    mockQualityLabelContainer = mockQualitySlider.parentElement;
     mockQualityLabelItself = document.getElementById('qualityLabel');
     mockConvertButton = document.getElementById('convertButton');
+    mockOriginalPreviewArea = document.getElementById('originalPreviewArea');
+    mockConvertedPreviewArea = document.getElementById('convertedPreviewArea');
+    mockIndividualLinksArea = document.getElementById('individualLinksArea');
+    mockDownloadArea = document.getElementById('downloadArea');
+    mockDownloadZipButton = document.getElementById('downloadZipButton');
+    mockDropZonePlaceholder = document.getElementById('dropZonePlaceholder');
 
 
     // Manually defining objects for testing based on converter.js structure
     // This is a workaround for not being able to import directly.
-    // These definitions will need to be updated to match the new dropdown logic.
-    // This is a workaround for not being able to import directly.
+    // These redefinitions should be as close as possible to the actual implementations
+    // or focus on the specific parts being unit tested.
+
     utils = {
         displayMessage: (message, isError = true) => {
+            if (!mockMessageArea) mockMessageArea = document.getElementById('messageArea');
             mockMessageArea.textContent = message;
             mockMessageArea.classList.remove('hidden');
             mockMessageArea.classList.toggle('text-red-600', isError);
             mockMessageArea.classList.toggle('text-green-600', !isError);
         },
         updateProgress: (current, total) => {
+            if(!mockProgressBar) mockProgressBar = document.getElementById('progressBar');
+            if(!mockProgressText) mockProgressText = document.getElementById('progressText');
             const percentage = Math.round((current / total) * 100);
             mockProgressBar.value = percentage;
             mockProgressText.textContent = `${percentage}% (${current}/${total} files processed)`;
         },
-        // ... other utils if needed for tests
+        clearPreviewsAndResults: () => {
+            state.previewUrls.forEach(url => URL.revokeObjectURL(url));
+            state.selectedFiles = [];
+            state.convertedBlobs = [];
+            state.previewUrls = [];
+            if(mockOriginalPreviewArea) mockOriginalPreviewArea.innerHTML = '<p>Original Placeholder</p>';
+            if(mockConvertedPreviewArea) mockConvertedPreviewArea.innerHTML = '<p>Converted Placeholder</p>';
+            if(mockIndividualLinksArea) mockIndividualLinksArea.innerHTML = '';
+            if(mockDownloadArea) mockDownloadArea.classList.add('hidden');
+            if(mockDownloadZipButton) mockDownloadZipButton.disabled = true;
+            // ... reset other elements like progress, messageArea
+            if(mockProgressBar) mockProgressBar.value = 0;
+            if(mockProgressText) mockProgressText.textContent = '';
+            if(mockMessageArea) mockMessageArea.classList.add('hidden');
+        },
+        createIndividualDownloadLink: (blob, filename) => {
+            const url = URL.createObjectURL(blob);
+            state.previewUrls.push(url);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.className = 'individual-download-link'; // Simplified class for testing
+            link.textContent = filename;
+            mockIndividualLinksArea.appendChild(link);
+        }
     };
+
+    previewHandlers = {
+        displayFilePreviews: (files, previewArea) => {
+            if(!previewArea) return;
+            previewArea.innerHTML = ''; // Clear previous previews
+            if (files.length === 0) {
+                previewArea.innerHTML = '<p class="empty-preview-placeholder">Select images...</p>';
+                return;
+            }
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    // To control img.onload/onerror in tests, the Image mock needs to be more sophisticated
+                    // or we assume it loads successfully for basic DOM checks.
+                    img.src = e.target.result; // This will trigger mock Image's src setter
+                    img.alt = `Preview of ${file.name}`;
+                    img.className = 'preview-image';
+                    // Simulate successful load for basic test
+                    if(img.onload && !img.src.includes('fail_img_load')) {
+                        img.onload();
+                    } else if (img.onerror && img.src.includes('fail_img_load')) {
+                        img.onerror();
+                    }
+                    previewArea.appendChild(img);
+                };
+                reader.onerror = () => { // Simulate reader error
+                    const p = document.createElement('p');
+                    p.textContent = `Error reading ${file.name}`;
+                    p.className = 'reader-error';
+                    previewArea.appendChild(p);
+                };
+
+                if (file.name.includes('fail_read')) {
+                    if (reader.onerror) reader.onerror();
+                } else {
+                     reader.readAsDataURL(file); // Triggers mock FileReader's readAsDataURL
+                }
+            });
+        }
+    };
+
 
     converter = {
         generateOutputFilename: (originalFileNameInput, index, outputFormatTypeParam) => {
-            const pattern = mockRenamingPattern.value || '{original}'; // Uses the mocked DOM input
+            const pattern = mockRenamingPattern.value || '{original}';
             let ext;
             const mimeToExt = {
                 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
@@ -242,25 +332,21 @@ describe('js/converter.js - Main Thread Utilities', () => {
     };
 
     // Mock Date for consistent {date} and {time} in generateOutputFilename
-    const RealDate = Date;
-    global.Date = class extends RealDate {
-      constructor() {
-        super();
-        // Return a fixed date for testing: 2023-10-26 10:00:00
-        return new RealDate(2023, 9, 26, 10, 0, 0);
-      }
-      // Mock other Date methods if used by the function
-      static now() {
-        return new RealDate(2023, 9, 26, 10, 0, 0).getTime();
-      }
+    const RealDate = Date; // Backup Real Date
+    global.Date = class extends RealDate { // Mock Date
+        constructor(val) {
+            super(val || '2023-10-26T10:00:00.000Z'); // Fixed date for testing
+        }
+        static now() {
+            return new RealDate('2023-10-26T10:00:00.000Z').getTime();
+        }
     };
-
 
   });
 
-  afterAll(() => {
-    // Restore original Date
-    global.Date = RealDate;
+  afterEach(() => {
+    global.Date = RealDate; // Restore real Date
+    jest.clearAllMocks(); // Clear all mocks
   });
 
 
@@ -327,7 +413,7 @@ describe('js/converter.js - Main Thread Utilities', () => {
 
     test('should handle complex pattern and different output type (TIFF)', () => {
       mockRenamingPattern.value = 'Converted_{date}_{original}_{index}_image';
-      mockOutputFormatSelect.value = 'image/tiff';
+      mockOutputFormatSelect.value = 'image/tiff'; // Set output format on the select
       const filename = converter.generateOutputFilename('sourceFile.png', 4);
       expect(filename).toBe('Converted_2023-10-26_sourceFile_005_image.tif');
     });
@@ -438,20 +524,217 @@ describe('js/converter.js - Main Thread Utilities', () => {
     });
 
      test('should default to first compatible option if preferred defaults (JPEG/PNG) are not available', () => {
-      mockInputFormatSelect.value = 'image/bmp'; // BMP compatible with PNG, JPG, WEBP, GIF
-      // Let's assume formatCompatibility for BMP doesn't include JPG or PNG for this specific test case
-      // (Temporarily override formatCompatibility for this test, or ensure such a case)
-      const originalBmpCompat = formatCompatibility['image/bmp'];
-      formatCompatibility['image/bmp'] = ['image/webp', 'image/gif']; // Force WEBP or GIF
+      mockInputFormatSelect.value = 'image/bmp';
+      const originalBmpCompat = JSON.parse(JSON.stringify(formatCompatibility['image/bmp'])); // Deep copy for restoration
+      formatCompatibility['image/bmp'] = ['image/webp', 'image/gif']; // Force WEBP or GIF as only compatible
 
-      mockOutputFormatSelect.value = 'image/tiff'; // Set an incompatible initial output
+      mockOutputFormatSelect.value = 'image/tiff'; // Set an initially incompatible output
 
       formatHandlers.updateOutputFormatDropdown();
 
-      expect(mockOutputFormatSelect.value).toBe('image/webp'); // Should pick the first one: WEBP
+      expect(mockOutputFormatSelect.value).toBe('image/webp');
 
-      formatCompatibility['image/bmp'] = originalBmpCompat; // Restore
+      formatCompatibility['image/bmp'] = originalBmpCompat; // Restore original compatibility
       expect(qualitySliderSpy).toHaveBeenCalled();
     });
   });
+
+  describe('previewHandlers.displayFilePreviews', () => {
+    const mockFiles = [
+      new File(["content_png"], "file1.png", { type: "image/png" }),
+      new File(["content_jpg"], "file2.jpg", { type: "image/jpeg" }),
+    ];
+
+    test('should clear previewArea and show placeholder if no files', () => {
+      previewHandlers.displayFilePreviews([], mockOriginalPreviewArea);
+      expect(mockOriginalPreviewArea.innerHTML).toContain('Select images...');
+      expect(mockOriginalPreviewArea.classList.contains('has-items')).toBe(false);
+    });
+
+    test('should create and append image elements for each file', (done) => {
+      previewHandlers.displayFilePreviews(mockFiles, mockOriginalPreviewArea);
+      // Wait for FileReader and Image onload to resolve
+      setTimeout(() => {
+        expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(mockFiles.length);
+        expect(mockOriginalPreviewArea.querySelector('img').alt).toBe('Preview of file1.png');
+        done();
+      }, 100); // Timeout might need adjustment based on mock async behavior
+    });
+
+    test('should handle FileReader error for a file', (done) => {
+        const filesWithError = [
+            new File(["content_ok"], "ok.png", { type: "image/png" }),
+            new File(["content_err"], "fail_read.png", { type: "image/png" }) // Mocked to fail reading
+        ];
+        previewHandlers.displayFilePreviews(filesWithError, mockOriginalPreviewArea);
+        setTimeout(() => {
+            expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(1); // Only one success
+            expect(mockOriginalPreviewArea.querySelector('.reader-error').textContent).toBe('Error reading fail_read.png');
+            done();
+        }, 100);
+    });
+
+    test('should handle Image.onerror for a file', (done) => {
+        const filesWithImgError = [
+            new File(["content_ok"], "ok.png", { type: "image/png" }),
+            new File(["content_img_err"], "fail_img_load.png", { type: "image/png" }) // Mocked to fail img.onload
+        ];
+        // Modify Image mock for this specific test to ensure onerror is hit for one file
+        const originalImage = global.Image;
+        global.Image = jest.fn(function() {
+            const img = new originalImage(); // Use the structure of the original mock
+            img.src = ''; // Initialize src
+             Object.defineProperty(img, 'src', {
+                set(value) {
+                    this._src = value;
+                    if (value.includes('fail_img_load')) { // Specific condition to trigger error
+                        if(this.onerror) Promise.resolve().then(this.onerror);
+                    } else {
+                       if(this.onload) Promise.resolve().then(this.onload);
+                    }
+                },
+                get() { return this._src; }
+            });
+            return img;
+        });
+
+        previewHandlers.displayFilePreviews(filesWithImgError, mockOriginalPreviewArea);
+        setTimeout(() => {
+            expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(1);
+            expect(mockOriginalPreviewArea.textContent).toContain('Error loading fail_img_load.png');
+            global.Image = originalImage; // Restore original mock
+            done();
+        }, 100);
+    });
+  });
+
+  describe('utils.createIndividualDownloadLink', () => {
+    test('should create and append a download link', () => {
+      const mockBlob = new Blob(['test content'], {type: 'text/plain'});
+      const mockFilename = 'testfile.txt';
+
+      // Reset state.previewUrls for this test if it's shared or ensure it's clean
+      state.previewUrls = [];
+      global.URL.createObjectURL.mockClear(); // Clear previous calls
+
+      utils.createIndividualDownloadLink(mockBlob, mockFilename);
+
+      expect(global.URL.createObjectURL).toHaveBeenCalledWith(mockBlob);
+      const createdUrl = global.URL.createObjectURL.mock.results[0].value;
+
+      expect(mockIndividualLinksArea.children.length).toBe(1);
+      const link = mockIndividualLinksArea.children[0];
+      expect(link.tagName).toBe('A');
+      expect(link.href).toBe(createdUrl);
+      expect(link.download).toBe(mockFilename);
+      expect(link.textContent).toContain(mockFilename);
+      expect(state.previewUrls).toContain(createdUrl);
+    });
+  });
+
+  describe('Bulk Download (ZIP) Functionality', () => {
+    // Simulate the event listener logic for downloadZipButton
+    async function simulateZipDownload() {
+        if (state.convertedBlobs.length === 0 || state.convertedBlobs.every(b => !b)) {
+            utils.displayMessage('No converted images to download.');
+            return;
+        }
+        const zip = new JSZip();
+        let filesAdded = 0;
+        state.convertedBlobs.forEach((result) => {
+            if (result && result.blob) {
+                zip.file(result.originalName, result.blob);
+                filesAdded++;
+            }
+        });
+        if (filesAdded === 0) {
+            utils.displayMessage('No valid converted images to zip.');
+            return;
+        }
+        try {
+            const content = await zip.generateAsync({ type: 'blob' });
+            const zipUrl = URL.createObjectURL(content);
+            state.previewUrls.push(zipUrl);
+            const link = document.createElement('a');
+            link.href = zipUrl;
+            link.download = 'converted_images.zip';
+            // document.body.appendChild(link); // Not needed for click() mock
+            link.click = jest.fn(); // Mock click
+            link.click();
+            // document.body.removeChild(link); // Not needed
+            expect(link.click).toHaveBeenCalled(); // Verify click was called
+        } catch (error) {
+            utils.displayMessage('Error creating ZIP file.', true);
+        }
+    }
+
+    beforeEach(() => {
+        // Reset JSZip mocks and state for each ZIP test
+        global.JSZip.mockClear();
+        global.JSZip.prototype.file.mockClear();
+        global.JSZip.prototype.generateAsync.mockClear();
+        global.URL.createObjectURL.mockClear();
+        state.convertedBlobs = [];
+        state.previewUrls = [];
+    });
+
+    test('should initiate ZIP download with successfully converted files', async () => {
+      state.convertedBlobs = [
+        { blob: new Blob(['content1'], {type: 'image/png'}), originalName: 'file1.png' },
+        null, // A failed conversion
+        { blob: new Blob(['content2'], {type: 'image/jpeg'}), originalName: 'file2.jpg' }
+      ];
+
+      await simulateZipDownload();
+
+      expect(global.JSZip).toHaveBeenCalledTimes(1);
+      const zipInstance = global.JSZip.mock.instances[0];
+      expect(zipInstance.file).toHaveBeenCalledTimes(2);
+      expect(zipInstance.file).toHaveBeenCalledWith('file1.png', state.convertedBlobs[0].blob);
+      expect(zipInstance.file).toHaveBeenCalledWith('file2.jpg', state.convertedBlobs[2].blob);
+      expect(zipInstance.generateAsync).toHaveBeenCalledWith({ type: 'blob' });
+      expect(global.URL.createObjectURL).toHaveBeenCalledTimes(1); // For the ZIP blob
+      // `link.click` is asserted within simulateZipDownload
+    });
+
+    test('should display message if no files to zip', async () => {
+      state.convertedBlobs = [null, null]; // All failed
+      const displayMessageSpy = jest.spyOn(utils, 'displayMessage');
+      await simulateZipDownload();
+      expect(displayMessageSpy).toHaveBeenCalledWith('No valid converted images to zip.');
+      displayMessageSpy.mockRestore();
+    });
+     test('should display message if convertedBlobs is initially empty', async () => {
+      state.convertedBlobs = [];
+      const displayMessageSpy = jest.spyOn(utils, 'displayMessage');
+      await simulateZipDownload();
+      expect(displayMessageSpy).toHaveBeenCalledWith('No converted images to download.');
+      displayMessageSpy.mockRestore();
+    });
+  });
+
+  describe('utils.clearPreviewsAndResults', () => {
+    test('should clear all preview areas and relevant state', () => {
+        // Populate some mock state and DOM
+        mockOriginalPreviewArea.innerHTML = '<img src="blob:orig" alt="orig"/>';
+        mockConvertedPreviewArea.innerHTML = '<img src="blob:conv" alt="conv"/>';
+        mockIndividualLinksArea.innerHTML = '<a href="blob:link">link</a>';
+        state.previewUrls = ['blob:orig', 'blob:conv', 'blob:link'];
+        state.selectedFiles = [new File([''], 'dummy.png')];
+        state.convertedBlobs = [{blob: new Blob(['']), originalName: 'dummy.png'}];
+
+        global.URL.revokeObjectURL.mockClear();
+
+        utils.clearPreviewsAndResults();
+
+        expect(mockOriginalPreviewArea.innerHTML).toContain('Select images...');
+        expect(mockConvertedPreviewArea.innerHTML).toContain('Converted previews will appear here');
+        expect(mockIndividualLinksArea.innerHTML).toBe('');
+        expect(state.previewUrls.length).toBe(0);
+        expect(global.URL.revokeObjectURL).toHaveBeenCalledTimes(3);
+        expect(state.selectedFiles.length).toBe(0);
+        expect(state.convertedBlobs.length).toBe(0);
+    });
+  });
+
 });
