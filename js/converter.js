@@ -304,14 +304,16 @@ const fullScreenPreview = {
 // Format handling
 
 const formatCompatibility = {
-    'image/png': ['image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
+    'image/png': ['image/jpeg', 'image/webp', 'image/bmp', 'image/gif'], // Can also output to image/png (handled by default selection logic)
     'image/jpeg': ['image/png', 'image/webp', 'image/bmp', 'image/gif'],
     'image/webp': ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'],
-    'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'], // Decoded to canvas first
+    'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'], // Input only, worker rejects tiff output
     'image/bmp': ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
-    'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Static from canvas
-    'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'],
-    'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'] // Decoded to canvas first
+    'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Input (static or first frame), output is static
+    'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'], // SVG can be passthrough or rasterized
+    'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Input only, worker rejects ico output
+    'text/markdown': ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'],
+    'application/pdf': [] // PDF input not supported for conversion to other formats
 };
 
 const formatDisplayNames = {
@@ -319,10 +321,12 @@ const formatDisplayNames = {
     'image/jpeg': 'JPEG',
     'image/webp': 'WEBP',
     'image/bmp': 'BMP',
-    'image/gif': 'GIF',
+    'image/gif': 'GIF (Static)', // Clarified static output
     'image/svg+xml': 'SVG',
-    'image/tiff': 'TIFF',
-    'image/x-icon': 'ICO'
+    'image/tiff': 'TIFF (Input only)', // Clarified input only
+    'image/x-icon': 'ICO (Input only)', // Clarified input only
+    'text/markdown': 'Markdown (.md)',
+    'application/pdf': 'PDF (.pdf)'
 };
 
 const formatHandlers = {
@@ -355,6 +359,8 @@ const formatHandlers = {
             acceptString += ', .png';
         } else if (selectedFormat === 'image/webp') {
             acceptString += ', .webp';
+        } else if (selectedFormat === 'text/markdown') {
+            acceptString += ', .md, .markdown';
         }
         fileInput.accept = acceptString;
     },
@@ -391,36 +397,67 @@ const formatHandlers = {
         if (!inputFormatSelect || !outputFormatSelect) return;
 
         const selectedInputFormat = inputFormatSelect.value;
-        const compatibleOutputs = formatCompatibility[selectedInputFormat] ||
-                                  Object.keys(formatDisplayNames).filter(k => k !== 'image/tiff' && k !== 'image/x-icon'); // Default if not in map
+        // Get compatible outputs. If input format not in map, or list is empty, provide a safe default (e.g., empty or common web formats).
+        let compatibleOutputs = formatCompatibility[selectedInputFormat];
+
+        if (!compatibleOutputs || compatibleOutputs.length === 0) {
+            // If specific input type has no defined conversions (e.g. PDF input),
+            // or if the input type itself isn't in formatCompatibility.
+            if (selectedInputFormat === 'application/pdf') { // PDF input has no conversion targets
+                 compatibleOutputs = [];
+            } else { // Fallback for other unlisted inputs - allow conversion to common web formats
+                 compatibleOutputs = ['image/png', 'image/jpeg', 'image/webp'];
+            }
+        }
 
         const currentOutputValue = outputFormatSelect.value;
         outputFormatSelect.innerHTML = ''; // Clear existing options
 
-        compatibleOutputs.forEach(mimeType => {
-            if (formatDisplayNames[mimeType]) { // Ensure it's a known displayable format
-                const option = document.createElement('option');
-                option.value = mimeType;
-                option.textContent = formatDisplayNames[mimeType];
-                outputFormatSelect.appendChild(option);
-            }
-        });
+        if (compatibleOutputs.length === 0) {
+            const option = document.createElement('option');
+            option.value = "";
+            option.textContent = "No conversion available";
+            option.disabled = true;
+            outputFormatSelect.appendChild(option);
+            outputFormatSelect.value = ""; // Set to the disabled option
+        } else {
+            compatibleOutputs.forEach(mimeType => {
+                if (formatDisplayNames[mimeType]) {
+                    const option = document.createElement('option');
+                    option.value = mimeType;
+                    option.textContent = formatDisplayNames[mimeType];
+                    outputFormatSelect.appendChild(option);
+                }
+            });
 
-        // Try to restore previous selection or set a sensible default
-        if (compatibleOutputs.includes(currentOutputValue)) {
-            outputFormatSelect.value = currentOutputValue;
-        } else if (compatibleOutputs.length > 0) {
-            // Default to JPEG if available and input is not JPEG, else PNG, else first in list
-            if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
-                outputFormatSelect.value = 'image/jpeg';
-            } else if (compatibleOutputs.includes('image/png')) {
-                outputFormatSelect.value = 'image/png';
-            } else {
-                outputFormatSelect.value = compatibleOutputs[0];
+            let newSelectedOutput = '';
+            if (compatibleOutputs.includes(currentOutputValue)) {
+                newSelectedOutput = currentOutputValue;
+            } else if (compatibleOutputs.length > 0) {
+                if (selectedInputFormat === 'text/markdown' && compatibleOutputs.includes('application/pdf')) {
+                    newSelectedOutput = 'application/pdf';
+                } else if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
+                    newSelectedOutput = 'image/jpeg';
+                } else if (selectedInputFormat !== 'image/png' && compatibleOutputs.includes('image/png')) { // Prefer not to default to same format if others available
+                    newSelectedOutput = 'image/png';
+                } else if (compatibleOutputs.includes('image/png') && selectedInputFormat === 'image/png') { // If PNG is input, and PNG is an option, but others might exist
+                     // Try to pick a different common format first
+                    if (compatibleOutputs.includes('image/jpeg')) newSelectedOutput = 'image/jpeg';
+                    else if (compatibleOutputs.includes('image/webp')) newSelectedOutput = 'image/webp';
+                    else newSelectedOutput = compatibleOutputs[0]; // Fallback to first if no other common choice
+                }
+                 else {
+                    newSelectedOutput = compatibleOutputs[0];
+                }
+            }
+
+            if (newSelectedOutput) {
+                outputFormatSelect.value = newSelectedOutput;
+            } else if (outputFormatSelect.options.length > 0) {
+                 outputFormatSelect.selectedIndex = 0; // Select first available if newSelectedOutput is somehow empty
             }
         }
 
-        // After updating dropdown, ensure quality slider visibility is also updated
         formatHandlers.updateQualitySliderVisibility();
     }
 };
@@ -528,7 +565,8 @@ const converter = {
             'image/bmp': 'bmp',
             'image/gif': 'gif',
             'image/x-icon': 'ico',
-            'image/svg+xml': 'svg'
+            'image/svg+xml': 'svg',
+            'application/pdf': 'pdf' // Added PDF extension
         };
 
         if (outputFormatType && mimeToExt[outputFormatType]) {
@@ -538,7 +576,9 @@ const converter = {
             if (outputFormatSelect && mimeToExt[outputFormatSelect.value]) {
                 ext = mimeToExt[outputFormatSelect.value];
             } else if (outputFormatSelect) { // Fallback for unexpected MIME types if any
-                ext = outputFormatSelect.value.split('/')[1] || 'bin';
+                 // Ensure we handle application/pdf here if it's the value
+                const valueParts = outputFormatSelect.value.split('/');
+                ext = valueParts[valueParts.length - 1] || 'bin';
             } else {
                 ext = 'png'; // Default if somehow outputFormatSelect is not found
             }
@@ -546,9 +586,10 @@ const converter = {
 
         // Handle specific cases like jpeg -> jpg
         if (ext === 'jpeg') ext = 'jpg';
-        if (ext === 'svg+xml') ext = 'svg'; // common practice
-        if (ext === 'tiff') ext = 'tif'; // common practice, though tiff is also used
+        if (ext === 'svg+xml') ext = 'svg';
+        if (ext === 'tiff') ext = 'tif';
         if (ext === 'x-icon') ext = 'ico';
+        // 'pdf' is already 'pdf'
 
 
         const now = new Date();

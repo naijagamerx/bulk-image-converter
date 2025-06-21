@@ -262,16 +262,25 @@ describe('js/converter.js - Main Thread Utilities', () => {
         'image/png': ['image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
         'image/jpeg': ['image/png', 'image/webp', 'image/bmp', 'image/gif'],
         'image/webp': ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'],
-        'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
+        'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'], // Input only, worker rejects tiff output
         'image/bmp': ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
-        'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'],
-        'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'],
-        'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp']
+        'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Input (static or first frame), output is static
+        'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'], // SVG can be passthrough or rasterized
+        'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Input only, worker rejects ico output
+        'text/markdown': ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'],
+        'application/pdf': [] // PDF input not supported for conversion to other formats
     };
     const formatDisplayNames = {
-        'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WEBP',
-        'image/bmp': 'BMP', 'image/gif': 'GIF', 'image/svg+xml': 'SVG',
-        'image/tiff': 'TIFF', 'image/x-icon': 'ICO'
+        'image/png': 'PNG',
+        'image/jpeg': 'JPEG',
+        'image/webp': 'WEBP',
+        'image/bmp': 'BMP',
+        'image/gif': 'GIF (Static)',
+        'image/svg+xml': 'SVG',
+        'image/tiff': 'TIFF (Input only)',
+        'image/x-icon': 'ICO (Input only)',
+        'text/markdown': 'Markdown (.md)',
+        'application/pdf': 'PDF (.pdf)'
     };
 
     formatHandlers = {
@@ -287,6 +296,8 @@ describe('js/converter.js - Main Thread Utilities', () => {
             else if (selectedFormat === 'image/jpeg') acceptString += ', .jpg, .jpeg, .jfif, .pjpeg, .pjp';
             else if (selectedFormat === 'image/png') acceptString += ', .png';
             else if (selectedFormat === 'image/webp') acceptString += ', .webp';
+            else if (selectedFormat === 'text/markdown') acceptString += ', .md, .markdown';
+            else if (selectedFormat === 'application/pdf') acceptString += ', .pdf';
             mockFileInput.accept = acceptString;
         },
         updateQualitySliderVisibility: () => {
@@ -303,30 +314,61 @@ describe('js/converter.js - Main Thread Utilities', () => {
         updateOutputFormatDropdown: () => {
             if (!mockInputFormatSelect || !mockOutputFormatSelect) return;
             const selectedInputFormat = mockInputFormatSelect.value;
-            const compatibleOutputs = formatCompatibility[selectedInputFormat] ||
-                                      Object.keys(formatDisplayNames).filter(k => k !== 'image/tiff' && k !== 'image/x-icon');
-            const currentOutputValue = mockOutputFormatSelect.value;
-            mockOutputFormatSelect.innerHTML = '';
-            compatibleOutputs.forEach(mimeType => {
-                if (formatDisplayNames[mimeType]) {
-                    const option = document.createElement('option');
-                    option.value = mimeType;
-                    option.textContent = formatDisplayNames[mimeType];
-                    mockOutputFormatSelect.appendChild(option);
-                }
-            });
-            if (compatibleOutputs.includes(currentOutputValue)) {
-                mockOutputFormatSelect.value = currentOutputValue;
-            } else if (compatibleOutputs.length > 0) {
-                if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
-                    mockOutputFormatSelect.value = 'image/jpeg';
-                } else if (compatibleOutputs.includes('image/png')) {
-                    mockOutputFormatSelect.value = 'image/png';
+            let compatibleOutputs = formatCompatibility[selectedInputFormat];
+
+            if (!compatibleOutputs || compatibleOutputs.length === 0) {
+                if (selectedInputFormat === 'application/pdf') {
+                     compatibleOutputs = [];
                 } else {
-                    mockOutputFormatSelect.value = compatibleOutputs[0];
+                     compatibleOutputs = ['image/png', 'image/jpeg', 'image/webp'];
                 }
             }
-            // Directly call the mocked/redefined version of updateQualitySliderVisibility
+
+            const currentOutputValue = mockOutputFormatSelect.value;
+            mockOutputFormatSelect.innerHTML = '';
+
+            if (compatibleOutputs.length === 0) {
+                const option = document.createElement('option');
+                option.value = "";
+                option.textContent = "No conversion available";
+                option.disabled = true;
+                mockOutputFormatSelect.appendChild(option);
+                mockOutputFormatSelect.value = "";
+            } else {
+                compatibleOutputs.forEach(mimeType => {
+                    if (formatDisplayNames[mimeType]) {
+                        const option = document.createElement('option');
+                        option.value = mimeType;
+                        option.textContent = formatDisplayNames[mimeType];
+                        mockOutputFormatSelect.appendChild(option);
+                    }
+                });
+
+                let newSelectedOutput = '';
+                if (compatibleOutputs.includes(currentOutputValue)) {
+                    newSelectedOutput = currentOutputValue;
+                } else if (compatibleOutputs.length > 0) {
+                    if (selectedInputFormat === 'text/markdown' && compatibleOutputs.includes('application/pdf')) {
+                        newSelectedOutput = 'application/pdf';
+                    } else if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
+                        newSelectedOutput = 'image/jpeg';
+                    } else if (selectedInputFormat !== 'image/png' && compatibleOutputs.includes('image/png')) {
+                        newSelectedOutput = 'image/png';
+                    } else if (compatibleOutputs.includes('image/png') && selectedInputFormat === 'image/png') {
+                        if (compatibleOutputs.includes('image/jpeg')) newSelectedOutput = 'image/jpeg';
+                        else if (compatibleOutputs.includes('image/webp')) newSelectedOutput = 'image/webp';
+                        else newSelectedOutput = compatibleOutputs[0];
+                    } else {
+                        newSelectedOutput = compatibleOutputs[0];
+                    }
+                }
+
+                if (newSelectedOutput) {
+                    mockOutputFormatSelect.value = newSelectedOutput;
+                } else if (mockOutputFormatSelect.options.length > 0) {
+                     mockOutputFormatSelect.selectedIndex = 0;
+                }
+            }
             formatHandlers.updateQualitySliderVisibility();
         }
     };
@@ -431,6 +473,18 @@ describe('js/converter.js - Main Thread Utilities', () => {
       formatHandlers.updateFileInputAccept();
       expect(mockFileInput.accept).toBe('image/tiff, .tif, .tiff');
     });
+
+    test('should set correct accept string for Markdown', () => {
+      mockInputFormatSelect.value = 'text/markdown';
+      formatHandlers.updateFileInputAccept();
+      expect(mockFileInput.accept).toBe('text/markdown, .md, .markdown');
+    });
+
+    test('should set correct accept string for PDF', () => {
+      mockInputFormatSelect.value = 'application/pdf';
+      formatHandlers.updateFileInputAccept();
+      expect(mockFileInput.accept).toBe('application/pdf, .pdf');
+    });
   });
 
   describe('formatHandlers.updateQualitySliderVisibility', () => {
@@ -525,17 +579,39 @@ describe('js/converter.js - Main Thread Utilities', () => {
 
      test('should default to first compatible option if preferred defaults (JPEG/PNG) are not available', () => {
       mockInputFormatSelect.value = 'image/bmp';
-      const originalBmpCompat = JSON.parse(JSON.stringify(formatCompatibility['image/bmp'])); // Deep copy for restoration
-      formatCompatibility['image/bmp'] = ['image/webp', 'image/gif']; // Force WEBP or GIF as only compatible
+      const originalBmpCompat = JSON.parse(JSON.stringify(formatCompatibility['image/bmp']));
+      formatCompatibility['image/bmp'] = ['image/webp', 'image/gif'];
 
-      mockOutputFormatSelect.value = 'image/tiff'; // Set an initially incompatible output
+      mockOutputFormatSelect.value = 'image/tiff';
 
       formatHandlers.updateOutputFormatDropdown();
 
       expect(mockOutputFormatSelect.value).toBe('image/webp');
 
-      formatCompatibility['image/bmp'] = originalBmpCompat; // Restore original compatibility
+      formatCompatibility['image/bmp'] = originalBmpCompat;
       expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+
+    test('should show correct options for Markdown input, defaulting to PDF', () => {
+        mockInputFormatSelect.value = 'text/markdown';
+        // Set an initial output that is not PDF to test if default to PDF works
+        mockOutputFormatSelect.value = 'image/png';
+        formatHandlers.updateOutputFormatDropdown();
+
+        const expectedOutputs = formatCompatibility['text/markdown'];
+        expect(mockOutputFormatSelect.options.length).toBe(expectedOutputs.length);
+        expect(Array.from(mockOutputFormatSelect.options).find(opt => opt.value === 'application/pdf')).toBeTruthy();
+        expect(mockOutputFormatSelect.value).toBe('application/pdf'); // Should default to PDF for MD
+        expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+
+    test('should show "No conversion available" for PDF input', () => {
+        mockInputFormatSelect.value = 'application/pdf';
+        formatHandlers.updateOutputFormatDropdown();
+        expect(mockOutputFormatSelect.options.length).toBe(1);
+        expect(mockOutputFormatSelect.options[0].disabled).toBe(true);
+        expect(mockOutputFormatSelect.options[0].textContent).toBe('No conversion available');
+        expect(qualitySliderSpy).toHaveBeenCalled();
     });
   });
 
