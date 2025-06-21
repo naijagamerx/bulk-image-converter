@@ -360,7 +360,10 @@ const formatHandlers = {
         } else if (selectedFormat === 'image/webp') {
             acceptString += ', .webp';
         } else if (selectedFormat === 'text/markdown') {
-            acceptString += ', .md, .markdown';
+            // More inclusive for Markdown files that might be text/plain
+            acceptString = 'text/markdown,.md,.markdown,text/plain';
+        } else if (selectedFormat === 'application/pdf') { // Added for completeness, though PDF input is not converted
+            acceptString += ', .pdf';
         }
         fileInput.accept = acceptString;
     },
@@ -1038,34 +1041,42 @@ document.addEventListener('DOMContentLoaded', () => {
             fileInput.addEventListener('change', (event) => {
                 const currentInputFormat = document.getElementById('inputFormatSelect').value;
                 const originalNumberOfFilesSelected = event.target.files.length;
-                const newFiles = Array.from(event.target.files).filter(file => file.type === currentInputFormat);
-                const dropZonePlaceholder = document.getElementById('dropZonePlaceholder'); // Get here for use in both branches
+                let newFiles;
+
+                if (currentInputFormat === 'text/markdown') {
+                    newFiles = Array.from(event.target.files).filter(file =>
+                        file.type === 'text/markdown' ||
+                        file.type === 'text/plain' ||
+                        (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.md')) ||
+                        (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.markdown'))
+                    );
+                } else {
+                    newFiles = Array.from(event.target.files).filter(file => file.type === currentInputFormat);
+                }
+
+                const dropZonePlaceholder = document.getElementById('dropZonePlaceholder');
 
                 if (newFiles.length === 0) {
-                    utils.clearPreviewsAndResults(); // Clear everything, including state.selectedFiles
-                    if (originalNumberOfFilesSelected > 0) { // Files were selected, but none matched the type
-                        utils.displayMessage(`Please select ${currentInputFormat.split('/')[1].toUpperCase()} files only.`);
+                    utils.clearPreviewsAndResults();
+                    if (originalNumberOfFilesSelected > 0) {
+                        utils.displayMessage(`Please select valid ${currentInputFormat.split('/')[1] || currentInputFormat} files. Some files were ignored.`);
                     }
-                    // Ensure UI reflects no selection
                     if (dropZonePlaceholder) dropZonePlaceholder.classList.remove('hidden');
                     if (convertButton) convertButton.disabled = true;
-                    // originalPreviewArea is already reset by clearPreviewsAndResults
                     return;
                 }
 
-                // Valid files are present
-                utils.clearPreviewsAndResults();    // Clear old state & previews
-                state.selectedFiles = newFiles;     // Assign new files to state
+                utils.clearPreviewsAndResults();
+                state.selectedFiles = newFiles;
 
-                if (originalPreviewArea) { // Ensure element exists
-                    previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Display new previews
+                if (originalPreviewArea) {
+                    previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
                 }
 
-                // Update other UI elements
                 if (convertButton) convertButton.disabled = false;
                 if (dropZonePlaceholder) dropZonePlaceholder.classList.add('hidden');
-                if (originalNumberOfFilesSelected > newFiles.length) { // Some files were filtered out
-                    utils.displayMessage(`${newFiles.length} valid file(s) selected. ${originalNumberOfFilesSelected - newFiles.length} file(s) ignored due to type mismatch.`, false);
+                if (originalNumberOfFilesSelected > newFiles.length) {
+                    utils.displayMessage(`${newFiles.length} valid file(s) selected. ${originalNumberOfFilesSelected - newFiles.length} file(s) ignored.`, false);
                 } else {
                     utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
                 }
@@ -1076,16 +1087,27 @@ document.addEventListener('DOMContentLoaded', () => {
         dropZoneArea.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
-            const dropZonePlaceholder = document.getElementById('dropZonePlaceholder'); // Get here
+            const dropZonePlaceholder = document.getElementById('dropZonePlaceholder');
 
             const originalNumberOfFilesDropped = e.dataTransfer.files.length;
             const currentInputFormat = document.getElementById('inputFormatSelect').value;
-            const newlySelectedFiles = Array.from(e.dataTransfer.files).filter(file => file.type === currentInputFormat);
+            let newlySelectedFiles;
+
+            if (currentInputFormat === 'text/markdown') {
+                newlySelectedFiles = Array.from(e.dataTransfer.files).filter(file =>
+                    file.type === 'text/markdown' ||
+                    file.type === 'text/plain' ||
+                    (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.md')) ||
+                    (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.markdown'))
+                );
+            } else {
+                newlySelectedFiles = Array.from(e.dataTransfer.files).filter(file => file.type === currentInputFormat);
+            }
 
             if (newlySelectedFiles.length === 0) {
-                utils.clearPreviewsAndResults(); // Clear everything
-                if (originalNumberOfFilesDropped > 0) { // Files were dropped, but none matched
-                    utils.displayMessage(`Please drop ${currentInputFormat.split('/')[1].toUpperCase()} files only. ${originalNumberOfFilesDropped} file(s) were ignored.`);
+                utils.clearPreviewsAndResults();
+                if (originalNumberOfFilesDropped > 0) {
+                    utils.displayMessage(`Please drop valid ${currentInputFormat.split('/')[1] || currentInputFormat} files. ${originalNumberOfFilesDropped} file(s) were ignored.`);
                 }
                 if (dropZonePlaceholder) {
                     dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
@@ -1095,20 +1117,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Valid files are present
-            utils.clearPreviewsAndResults();    // Clear old state & previews
-            state.selectedFiles = newlySelectedFiles; // Assign new files to state
+            utils.clearPreviewsAndResults();
+            state.selectedFiles = newlySelectedFiles;
 
-            if (originalPreviewArea) { // Ensure element exists
-                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Display new previews
+            if (originalPreviewArea) {
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
             }
 
-            // Update other UI elements
             if (convertButton) convertButton.disabled = false;
             if (dropZonePlaceholder) dropZonePlaceholder.classList.add('hidden');
 
             if (originalNumberOfFilesDropped > newlySelectedFiles.length) {
-                 utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${originalNumberOfFilesDropped - newlySelectedFiles.length} file(s) ignored due to type mismatch.`, false);
+                 utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${originalNumberOfFilesDropped - newlySelectedFiles.length} file(s) ignored.`, false);
             } else {
                 utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
             }
