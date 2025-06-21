@@ -393,91 +393,164 @@ describe('js/worker/mainWorker.js - Worker Logic', () => {
   });
 
   test('Markdown to PDF conversion should use marked and jsPDF', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping MD to PDF test as worker function is dummied/not loaded."); return; }
-
     const mockMarkdown = '## PDF Test';
     const mockFile = new File([mockMarkdown], 'test.md', { type: 'text/markdown' });
+    const payload = { file: mockFile, outputFormat: 'application/pdf', quality: 1, originalName: 'test.md', index: 0 };
 
+    // Specific mock for FileReader for this test
     const mockReaderInstance = new FileReader();
-    mockReaderInstance.readAsText.mockImplementationOnce(function() { this.onload({ target: { result: mockMarkdown } }); });
+    mockReaderInstance.readAsText = jest.fn().mockImplementationOnce(function() {
+        this.result = mockMarkdown;
+        if (this.onload) { this.onload({ target: { result: this.result } }); }
+    });
     FileReader.mockImplementationOnce(() => mockReaderInstance);
 
-    const resultBlob = await convertImageOnWorker(mockFile, 'application/pdf', 1);
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick);
 
+    expect(FileReader).toHaveBeenCalledTimes(1);
     expect(mockReaderInstance.readAsText).toHaveBeenCalledWith(mockFile);
     expect(self.marked.parse).toHaveBeenCalledWith(mockMarkdown);
     expect(self.jspdf.jsPDF).toHaveBeenCalledTimes(1);
     expect(mockJsPDFInstance.html).toHaveBeenCalledWith(expect.stringContaining('<p>## PDF Test<br></p>'), expect.any(Object));
 
     // Check if the callback to html() was invoked and led to output('blob')
-    // This part depends on how the mockJsPDFInstance.html is set up.
-    // If it resolves a promise after callback logic, then this works.
-    // The current mockJsPDFInstance.html calls the callback.
-    // We need to ensure the callback's doc.output('blob') is verifiable or that resultBlob is correct.
-    expect(resultBlob.type).toBe('application/pdf');
-    expect(resultBlob.size).toBeGreaterThan(0); // Basic check for some content
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      blob: expect.any(Blob),
+      name: 'test.md',
+      index: 0,
+      type: 'application/pdf'
+    }));
+    const postedBlob = workerContext.self.postMessage.mock.calls[0][0].blob;
+    expect(postedBlob.type).toBe('application/pdf');
+    expect(postedBlob.size).toBeGreaterThan(0); // Basic check for some content
   });
 
-  test('should reject with an error if toBlob fails during image conversion', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping toBlob error test as worker function is dummied/not loaded."); return; }
+  test('should post error if toBlob fails during image conversion', async () => {
     const mockFile = new File(['fake_data'], 'test.png', { type: 'image/png' });
-    // Standard FileReader and Image mocks will lead to processSourceCanvasToBlob
-    await expect(convertImageOnWorker(mockFile, 'image/fail', 1)) // image/fail triggers error in mockToBlob
-      .rejects
-      .toThrow(/failed for image\/fail/);
+    const payload = { file: mockFile, outputFormat: 'image/fail', quality: 1, originalName: 'test.png', index: 0 }; // image/fail triggers error in mockConvertToBlob/mockToBlob
+
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick);
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        error: expect.stringContaining('Blob creation failed for image/fail'), // Error message from mockConvertToBlob or similar
+        name: 'test.png'
+    }));
   });
 
-  test('should reject for unimplemented TIFF output from standard image', async () => {
-     if (convertImageOnWorker.getMockName() === 'jest.fn()') return;
+  test('should post error for unimplemented TIFF output from standard image', async () => {
     const mockFile = new File(['fake_png_data'], 'test.png', { type: 'image/png' });
-    await expect(convertImageOnWorker(mockFile, 'image/tiff', 1))
-      .rejects.toThrow('Worker: Conversion to TIFF output is not implemented yet.');
+    const payload = { file: mockFile, outputFormat: 'image/tiff', quality: 1, originalName: 'test.png', index: 0 };
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick);
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        error: 'Worker: Conversion to TIFF output is not implemented yet.',
+        name: 'test.png'
+    }));
   });
 
-  test('should reject for unimplemented ICO output from standard image', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') return;
+  test('should post error for unimplemented ICO output from standard image', async () => {
     const mockFile = new File(['fake_png_data'], 'test.png', { type: 'image/png' });
-    await expect(convertImageOnWorker(mockFile, 'image/x-icon', 1))
-      .rejects.toThrow('Worker: Conversion to ICO output is not implemented yet.');
+    const payload = { file: mockFile, outputFormat: 'image/x-icon', quality: 1, originalName: 'test.png', index: 0 };
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick);
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        error: 'Worker: Conversion to ICO output is not implemented yet.',
+        name: 'test.png'
+    }));
   });
-
 });
 
-// This attempt to directly require a non-module script is problematic.
-// For Jest to properly run tests on functions within worker.js,
-// worker.js should be refactored to export its core functions, e.g., using module.exports.
-// If that's not possible, testing becomes significantly harder and might require
-// loading the script content as a string and using `new Function()` or `eval`,
-// or relying more on integration-style tests.
+describe('js/worker/mainWorker.js - OffscreenCanvas Not Available', () => {
+  let originalOffscreenCanvas;
+  let workerContext;
 
-// For the purpose of this exercise, we assume that `convertImageOnWorker`
-// could be made available to the test environment.
-// The following is a hacky way to try and load it if it's not a module,
-// but it's not guaranteed to work in all environments or with complex scripts.
-try {
-  const fs = require('fs');
-  const path = require('path');
-  const workerCode = fs.readFileSync(path.resolve(__dirname, '../js/worker.js'), 'utf8');
+  beforeEach(() => {
+    jest.clearAllMocks();
+    originalOffscreenCanvas = global.OffscreenCanvas;
+    global.OffscreenCanvas = undefined; // Simulate OffscreenCanvas not being available
 
-  // Expose convertImageOnWorker globally for the tests if it's defined as a global function in the worker
-  // This is still not ideal. Best is to export.
-  // new Function(workerCode + '; this.convertImageOnWorker = convertImageOnWorker;').call(global);
+    // Setup context for these specific tests
+    workerContext = {
+      self: { postMessage: jest.fn() },
+      console: console,
+      FileReader: global.FileReader, // Still use the global mock for FileReader
+      Image: global.Image,         // Still use the global mock for Image
+      Tiff: global.Tiff,           // Tiff mock might try to use OffscreenCanvas
+      marked: global.self.marked,
+      jspdf: global.self.jspdf,
+      // OffscreenCanvas is deliberately undefined globally here
+    };
+    // Run the worker script in this context
+    script.runInNewContext(workerContext);
+  });
 
-  // A slightly safer way to expose, but still relies on convertImageOnWorker being a global in its script
-  const script = new (require('vm').Script)(workerCode);
-  const context = { self: global.self, Tiff: global.Tiff, FileReader: global.FileReader, Image: global.Image, OffscreenCanvas: global.OffscreenCanvas, console: console, /* other globals it might need */ };
-  script.runInNewContext(context);
-  if (context.convertImageOnWorker) {
-    module.exports.convertImageOnWorker = context.convertImageOnWorker;
-  } else {
-    // Fallback if it's not found (e.g. if it's not a global func but inside onmessage)
-    // This means the tests above will use the dummy.
-     module.exports.convertImageOnWorker = undefined;
-  }
+  afterEach(() => {
+    global.OffscreenCanvas = originalOffscreenCanvas; // Restore it
+  });
 
-} catch (e) {
-  console.error("Failed to load worker.js for testing:", e.message);
-  module.exports.convertImageOnWorker = undefined; // Ensure tests use dummy
-}
+  const postMessageToWorkerUndef = (payload) => {
+     if (typeof workerContext.self.onmessage !== 'function') {
+      throw new Error('workerContext.self.onmessage is not defined or not a function. Worker script might not have loaded correctly.');
+    }
+    workerContext.self.onmessage({ data: payload });
+  };
+
+  test('processSourceToBlob with ImageBitmap source should fail if OffscreenCanvas is undefined', async () => {
+    const mockImageBitmap = { width: 100, height: 100, constructor: { name: 'ImageBitmap' } }; // Simple mock
+    // Directly test processSourceToBlob if it's exposed on self, or test via onmessage
+    // For this test, let's assume onmessage triggers the path that uses ImageBitmap
+    const mockFile = new File(['dummy'], 'image.png', {type: 'image/png'});
+    const payload = { file: mockFile, outputFormat: 'image/png', quality: 1, originalName: 'image.png', index: 0 };
+
+    // Mock createImageBitmap to return our mock ImageBitmap
+    workerContext.self.createImageBitmap = jest.fn().mockResolvedValue(mockImageBitmap);
+
+    postMessageToWorkerUndef(payload);
+    await new Promise(process.nextTick);
+
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'Worker: OffscreenCanvas is not supported, required for ImageBitmap conversion.',
+      name: 'image.png',
+      index: 0
+    }));
+  });
+
+  test('processSourceToBlob for JPEG (needs background) should fail if OffscreenCanvas is undefined', async () => {
+    // This test assumes the source is something that doesn't immediately fail
+    // but leads to the background fill path. A mock canvas could work if Tiff.js produced it.
+    // For simplicity, using ImageBitmap path which will hit background fill if output is JPEG.
+    const mockImageBitmap = { width: 100, height: 100, constructor: { name: 'ImageBitmap' } };
+    const mockFile = new File(['dummy'], 'image.jpg', {type: 'image/jpeg'}); // Input type doesn't matter as much as output
+    const payload = { file: mockFile, outputFormat: 'image/jpeg', quality: 0.8, originalName: 'image.jpg', index: 0 };
+
+    workerContext.self.createImageBitmap = jest.fn().mockResolvedValue(mockImageBitmap);
+
+    postMessageToWorkerUndef(payload);
+    await new Promise(process.nextTick);
+
+    // The first error encountered would be for ImageBitmap processing if OffscreenCanvas is needed there.
+    // If ImageBitmap processing itself passed (e.g., if source was already an HTMLCanvasElement),
+    // then background fill would be the next failure point.
+    // Given our changes, ImageBitmap processing *will* fail first.
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'Worker: OffscreenCanvas is not supported, required for ImageBitmap conversion.',
+      name: 'image.jpg',
+      index: 0
+    }));
+  });
+
+  test('Markdown-to-Image should fail if OffscreenCanvas is undefined', async () => {
+    const mockFile = new File(['# test'], 'test.md', { type: 'text/markdown' });
+    const payload = { file: mockFile, outputFormat: 'image/png', quality: 1, originalName: 'test.md', index: 0 };
+
+    postMessageToWorkerUndef(payload);
+    await new Promise(process.nextTick);
+
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'Worker: OffscreenCanvas not available, cannot render Markdown to image in worker without it.',
+      name: 'test.md',
+      index: 0
+    }));
+  });
+});

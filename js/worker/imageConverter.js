@@ -15,83 +15,78 @@ function processSourceToBlob(source, targetOutputFormat, targetQuality) {
         let workingCanvas;
         let ctx;
 
-        if (source instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas)) {
+        // Check if OffscreenCanvas is available, which is preferred in workers.
+        if (typeof OffscreenCanvas === 'undefined') {
+            // If source is already a canvas type that's not OffscreenCanvas (e.g. HTMLCanvasElement from Tiff.js)
+            // and OffscreenCanvas is unavailable, we might have an issue or need to rely on its toBlob.
+            // However, any *new* canvas creation for processing (e.g. for ImageBitmap, background) requires OffscreenCanvas.
+            if (source instanceof HTMLCanvasElement) {
+                // Allow processing if source is HTMLCanvasElement and OffscreenCanvas is unavailable
+                // but this path will only work if HTMLCanvasElement.toBlob is functional.
+                workingCanvas = source;
+            } else if (typeof self.ImageBitmap !== 'undefined' && source instanceof self.ImageBitmap) {
+                // ImageBitmap needs a canvas to be drawn onto, and OffscreenCanvas is not available.
+                return rejectProcess(new Error('Worker: OffscreenCanvas is not supported, required for ImageBitmap conversion.'));
+            } else if (!(source instanceof HTMLCanvasElement)) { // If not ImageBitmap and not HTMLCanvasElement
+                 return rejectProcess(new Error('Worker: OffscreenCanvas is not supported and source is not a direct HTMLCanvasElement.'));
+            }
+            // If we reached here with an HTMLCanvasElement, proceed, but new canvases (e.g. for background) cannot be made.
+        }
+
+
+        if (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas) {
+            workingCanvas = source;
+        } else if (source instanceof HTMLCanvasElement) { // Source could be from Tiff.js if OffscreenCanvas was not used by Tiff.js
             workingCanvas = source;
         } else if (typeof self.ImageBitmap !== 'undefined' && source instanceof self.ImageBitmap) {
-            if (typeof OffscreenCanvas !== 'undefined') {
-                workingCanvas = new OffscreenCanvas(source.width, source.height);
-            } else {
-                try {
-                    // This is a fallback and might not work in very strict workers
-                    // or if OffscreenCanvas is the only supported path for canvas creation.
-                    workingCanvas = new self.HTMLCanvasElement(); // Not standard, but trying to see if polyfill/env supports
-                    workingCanvas.width = source.width;
-                    workingCanvas.height = source.height;
-                } catch (e) {
-                     try { // Fallback for some polyfills or less strict envs
-                        workingCanvas = document.createElement('canvas');
-                        workingCanvas.width = source.width;
-                        workingCanvas.height = source.height;
-                     } catch (e2) {
-                        rejectProcess(new Error('Worker: HTMLCanvasElement cannot be created (OffscreenCanvas also unavailable).'));
-                        return;
-                     }
-                }
+            if (typeof OffscreenCanvas === 'undefined') { // Should have been caught above, but as a safeguard
+                return rejectProcess(new Error('Worker: OffscreenCanvas is not supported (already checked), cannot process ImageBitmap.'));
             }
+            workingCanvas = new OffscreenCanvas(source.width, source.height);
             ctx = workingCanvas.getContext('2d');
-            if (!ctx) return rejectProcess(new Error('Worker: Could not get 2D context from working canvas.'));
+            if (!ctx) return rejectProcess(new Error('Worker: Could not get 2D context from OffscreenCanvas for ImageBitmap.'));
             ctx.drawImage(source, 0, 0);
         } else {
-            return rejectProcess(new Error('Worker: Invalid source type for canvas processing. Must be Canvas or ImageBitmap.'));
+            return rejectProcess(new Error('Worker: Invalid source type. Must be OffscreenCanvas, HTMLCanvasElement (from Tiff), or ImageBitmap.'));
         }
 
         ctx = workingCanvas.getContext('2d');
         if (!ctx) return rejectProcess(new Error('Worker: Could not get 2D context from final working canvas.'));
 
         if (targetOutputFormat === 'image/jpeg' || targetOutputFormat === 'image/bmp') {
-            let backgroundCanvas;
-            if (typeof OffscreenCanvas !== 'undefined') {
-                backgroundCanvas = new OffscreenCanvas(workingCanvas.width, workingCanvas.height);
-            } else {
-                 try {
-                    backgroundCanvas = new self.HTMLCanvasElement(); // or document.createElement if available
-                    backgroundCanvas.width = workingCanvas.width;
-                    backgroundCanvas.height = workingCanvas.height;
-                 } catch (e) {
-                     try {
-                        backgroundCanvas = document.createElement('canvas');
-                        backgroundCanvas.width = workingCanvas.width;
-                        backgroundCanvas.height = workingCanvas.height;
-                     } catch (e2) {
-                        rejectProcess(new Error('Worker: HTMLCanvasElement cannot be created for background fill.'));
-                        return;
-                     }
-                 }
+            if (typeof OffscreenCanvas === 'undefined') {
+                // If workingCanvas is an HTMLCanvasElement, we can't create a new background OffscreenCanvas.
+                // This implies that background filling for HTMLCanvasElement without OffscreenCanvas support is not possible here.
+                // However, the primary goal is to avoid worker errors. If OffscreenCanvas is needed and absent, it's an issue.
+                return rejectProcess(new Error('Worker: OffscreenCanvas is not supported, required for background fill.'));
             }
+            // Create a new OffscreenCanvas for background fill
+            const backgroundCanvas = new OffscreenCanvas(workingCanvas.width, workingCanvas.height);
             const bgCtx = backgroundCanvas.getContext('2d');
-             if (!bgCtx) {
-                return rejectProcess(new Error('Worker: Could not get 2D context for background canvas.'));
+            if (!bgCtx) {
+                return rejectProcess(new Error('Worker: Could not get 2D context for background OffscreenCanvas.'));
             }
             bgCtx.fillStyle = '#FFFFFF';
             bgCtx.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
             bgCtx.drawImage(workingCanvas, 0, 0);
-            workingCanvas = backgroundCanvas;
+            workingCanvas = backgroundCanvas; // Now workingCanvas is guaranteed to be an OffscreenCanvas if this path was taken
         }
 
         const qualityArgument = (targetOutputFormat === 'image/jpeg' || targetOutputFormat === 'image/webp') ? targetQuality : undefined;
 
-        if (workingCanvas.convertToBlob) {
+        // Prioritize convertToBlob if available (OffscreenCanvas)
+        if (typeof workingCanvas.convertToBlob === 'function') {
             workingCanvas.convertToBlob({ type: targetOutputFormat, quality: qualityArgument })
                 .then(blob => {
                     if (blob) resolveProcess(blob);
-                    else rejectProcess(new Error(`Worker: OffscreenCanvas toBlob failed for ${targetOutputFormat}. Unsupported format?`));
+                    else rejectProcess(new Error(`Worker: OffscreenCanvas.convertToBlob failed for ${targetOutputFormat}.`));
                 })
-                .catch(err => rejectProcess(new Error(`Worker: OffscreenCanvas toBlob error for ${targetOutputFormat}: ${err.message}`)));
-        } else if (typeof workingCanvas.toBlob === 'function') { // Check if toBlob exists (for HTMLCanvasElement)
+                .catch(err => rejectProcess(new Error(`Worker: OffscreenCanvas.convertToBlob error for ${targetOutputFormat}: ${err.message}`)));
+        } else if (typeof workingCanvas.toBlob === 'function') { // Fallback for HTMLCanvasElement (e.g. from Tiff.js)
             workingCanvas.toBlob(
                 (blob) => {
                     if (blob) resolveProcess(blob);
-                    else rejectProcess(new Error(`Worker: HTMLCanvasElement toBlob failed for ${targetOutputFormat}. Unsupported format or tainted canvas?`));
+                    else rejectProcess(new Error(`Worker: HTMLCanvasElement.toBlob failed for ${targetOutputFormat}.`));
                 },
                 targetOutputFormat,
                 qualityArgument
@@ -108,6 +103,9 @@ self.handleTiffInput = function(file, outputFormat, quality) {
         if (!self.Tiff) {
             return reject(new Error("Worker: TIFF library (Tiff.js) not available."));
         }
+        // OffscreenCanvas check should ideally be here if Tiff.js output (canvas) needs further OffscreenCanvas operations
+        // However, processSourceToBlob will handle it if Tiff.js produces an HTMLCanvasElement and background fill is needed.
+
         try {
             const arrayBuffer = await file.arrayBuffer();
             const tiff = new self.Tiff({ buffer: arrayBuffer });
@@ -119,6 +117,7 @@ self.handleTiffInput = function(file, outputFormat, quality) {
             if (!sourceCanvas) {
                 return reject(new Error(`Worker: Failed to convert TIFF to canvas for ${file.name}.`));
             }
+            // processSourceToBlob will check for OffscreenCanvas if it needs to create new canvases
             self.processSourceToBlob(sourceCanvas, outputFormat, quality).then(resolve).catch(reject);
         } catch (err) {
             reject(new Error(`Worker: Error decoding TIFF ${file.name}: ${err.message}`));
