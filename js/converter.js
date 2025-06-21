@@ -474,7 +474,7 @@ const previewHandlers = {
      * @param {HTMLElement} previewArea - The DOM element where previews should be displayed
      */
     displayFilePreviews(files, previewArea) {
-        previewArea.innerHTML = '';
+        previewArea.innerHTML = ''; // Clear previous previews
         
         if (files.length === 0) {
             previewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-arrow-up-from-bracket mr-2"></i> Select images to see previews.</p>';
@@ -483,63 +483,97 @@ const previewHandlers = {
         }
 
         previewArea.classList.add('has-items');
-        let loadedImages = 0;
-        const totalImages = files.length;
+        let processedItems = 0;
+        const totalItems = files.length;
+        const inputFormatSelect = document.getElementById('inputFormatSelect');
 
-        // Create preview elements for each file with fade-in animation
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = document.createElement('img');
-                img.src = e.target.result;
-                img.alt = `Preview of ${file.name}`;
-                img.title = file.name;
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300', 'cursor-pointer');
+        files.forEach((file, index) => {
+            const wrapper = document.createElement('div');
+            // Consistent styling for each preview item wrapper
+            wrapper.className = 'preview-item-wrapper animate-fade-in'; // Added a common class for potential styling
+            // Stagger animation if desired, using index
+            // wrapper.style.animationDelay = `${index * 0.05}s`;
+
+            const currentSelectedInputFormat = inputFormatSelect ? inputFormatSelect.value : '';
+            const isMarkdownFile = (
+                file.type === 'text/markdown' ||
+                file.type === 'text/plain' || // Often .md files are text/plain
+                (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.md')) ||
+                (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.markdown'))
+            );
+
+            if (isMarkdownFile && currentSelectedInputFormat === 'text/markdown') {
+                const placeholderDiv = document.createElement('div');
+                // Consistent styling with image previews (h-32, border, rounded-md, shadow-sm, etc.)
+                placeholderDiv.className = 'markdown-preview-placeholder flex flex-col items-center justify-center text-gray-500 w-full h-32 border rounded-md shadow-sm bg-gray-50 p-2';
                 
-                // Add click event for full screen preview
-                img.addEventListener('click', () => fullScreenPreview.show(img));
+                const icon = document.createElement('i');
+                // Using fa-file-alt as a generic file icon. fa-file-markdown might require Font Awesome Pro or specific setup.
+                icon.className = 'fas fa-file-alt text-4xl mb-2 text-gray-400';
+                placeholderDiv.appendChild(icon);
                 
-                img.onload = () => {
-                    loadedImages++;
-                    img.classList.remove('opacity-0'); // Make image visible
-                    if (loadedImages === totalImages && previewArea.parentElement) { // Ensure parent exists for scrolling
-                        previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
-                    }
-                };
-                // Add error handling for individual image loading
-                img.onerror = () => {
-                    loadedImages++; // Still count as "processed" for scroll logic
-                    console.error(`Preview Error: Failed to load preview for ${file.name}`);
-                    const errorP = document.createElement('p');
-                    errorP.textContent = `Error loading ${file.name}`;
-                    errorP.className = 'text-xs text-red-500';
-                    wrapper.innerHTML = ''; // Clear the wrapper
-                    wrapper.appendChild(errorP); // Show error message in its place
-                    if (loadedImages === totalImages && previewArea.parentElement) {
-                        previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
-                    }
-                };
-                
-                const wrapper = document.createElement('div');
-                // Animate fade-in if you have such a class defined elsewhere, or use opacity transition
-                // wrapper.className = 'animate-fade-in';
-                // wrapper.style.animationDelay = `${loadedImages * 0.05}s`; // Stagger if using CSS animation
-                wrapper.appendChild(img);
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'text-xs text-center break-all w-full px-1'; // break-all for long names
+                nameSpan.textContent = file.name;
+                nameSpan.title = file.name; // Show full name on hover
+                placeholderDiv.appendChild(nameSpan);
+
+                wrapper.appendChild(placeholderDiv);
                 previewArea.appendChild(wrapper);
-            };
-            // Add error handling for FileReader itself
-            reader.onerror = () => {
-                loadedImages++; // Count as "processed"
-                console.error(`FileReader Error: Failed to read file ${file.name}`);
-                const errorP = document.createElement('p');
-                errorP.textContent = `Cannot read ${file.name}`;
-                errorP.className = 'text-xs text-red-500 col-span-full text-center'; // Make it span if grid column based
-                previewArea.appendChild(errorP); // Add error message to preview area
-                if (loadedImages === totalImages && previewArea.parentElement) {
-                     previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                processedItems++;
+                if (processedItems === totalItems && previewArea.parentElement) {
+                    previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
                 }
-            };
-            reader.readAsDataURL(file);
+            } else {
+                // Logic for actual image files (using FileReader, creating <img> tag)
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.alt = `Preview of ${file.name}`;
+                    img.title = file.name;
+                    img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'opacity-0', 'transition-opacity', 'duration-300', 'cursor-pointer');
+                    img.addEventListener('click', () => fullScreenPreview.show(img));
+
+                    img.onload = () => {
+                        processedItems++;
+                        img.classList.remove('opacity-0');
+                        if (processedItems === totalItems && previewArea.parentElement) {
+                            previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                    };
+                    img.onerror = () => {
+                        processedItems++;
+                        console.error(`Preview Error: Failed to load preview for ${file.name}`);
+                        const errorP = document.createElement('p');
+                        errorP.textContent = `Error loading ${file.name}`;
+                        errorP.className = 'text-xs text-red-500 p-1 text-center break-all'; // Centered error message
+                        wrapper.innerHTML = '';
+                        wrapper.appendChild(errorP);
+                        // Ensure wrapper itself still conforms to grid item styling for height etc.
+                        wrapper.classList.add('flex', 'items-center', 'justify-center', 'w-full', 'h-32', 'border', 'rounded-md', 'bg-gray-50');
+                        if (processedItems === totalItems && previewArea.parentElement) {
+                            previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                    };
+                    wrapper.appendChild(img);
+                };
+                reader.onerror = () => {
+                    processedItems++;
+                    console.error(`FileReader Error: Failed to read file ${file.name}`);
+                    const errorP = document.createElement('p');
+                    errorP.textContent = `Cannot read ${file.name}`;
+                    errorP.className = 'text-xs text-red-500 p-1 text-center break-all';
+                    wrapper.innerHTML = '';
+                    wrapper.appendChild(errorP);
+                    wrapper.classList.add('flex', 'items-center', 'justify-center', 'w-full', 'h-32', 'border', 'rounded-md', 'bg-gray-50');
+                    if (processedItems === totalItems && previewArea.parentElement) {
+                         previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                };
+                previewArea.appendChild(wrapper);
+                reader.readAsDataURL(file);
+            }
         });
     }
 };
@@ -898,7 +932,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.convertedBlobs = new Array(state.selectedFiles.length).fill(undefined);
 
         const quality = parseFloat(document.getElementById('qualitySlider').value);
-        const outputFormatValue = document.getElementById('outputFormatSelect').value;
+        const selectedOutputFormat = document.getElementById('outputFormatSelect').value; // Defined here
 
         state.selectedFiles.forEach((file, index) => {
             // Create a simple data object for the worker.
@@ -919,7 +953,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             imageConversionWorker.postMessage({
                 file: file, // The File object itself
-                outputFormat: outputFormat,
+                outputFormat: selectedOutputFormat, // Use the correctly defined variable
                 quality: quality,
                 originalName: file.name, // Keep original name for reference
                 index: index

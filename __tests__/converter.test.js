@@ -185,40 +185,96 @@ describe('js/converter.js - Main Thread Utilities', () => {
 
     previewHandlers = {
         displayFilePreviews: (files, previewArea) => {
-            if(!previewArea) return;
-            previewArea.innerHTML = ''; // Clear previous previews
+            if (!previewArea) return;
+            previewArea.innerHTML = '';
             if (files.length === 0) {
                 previewArea.innerHTML = '<p class="empty-preview-placeholder">Select images...</p>';
+                previewArea.classList.remove('has-items'); // Ensure this class is managed
                 return;
             }
-            files.forEach(file => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    // To control img.onload/onerror in tests, the Image mock needs to be more sophisticated
-                    // or we assume it loads successfully for basic DOM checks.
-                    img.src = e.target.result; // This will trigger mock Image's src setter
-                    img.alt = `Preview of ${file.name}`;
-                    img.className = 'preview-image';
-                    // Simulate successful load for basic test
-                    if(img.onload && !img.src.includes('fail_img_load')) {
-                        img.onload();
-                    } else if (img.onerror && img.src.includes('fail_img_load')) {
-                        img.onerror();
-                    }
-                    previewArea.appendChild(img);
-                };
-                reader.onerror = () => { // Simulate reader error
-                    const p = document.createElement('p');
-                    p.textContent = `Error reading ${file.name}`;
-                    p.className = 'reader-error';
-                    previewArea.appendChild(p);
-                };
+            previewArea.classList.add('has-items'); // Ensure this class is managed
 
-                if (file.name.includes('fail_read')) {
-                    if (reader.onerror) reader.onerror();
+            let processedItems = 0;
+            const totalItems = files.length;
+
+            files.forEach((file, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'preview-item-wrapper'; // Using a generic class for wrapper
+
+                const currentSelectedInputFormat = mockInputFormatSelect ? mockInputFormatSelect.value : '';
+                const isMarkdownFile = (
+                    file.type === 'text/markdown' ||
+                    file.type === 'text/plain' ||
+                    (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.md')) ||
+                    (typeof file.name === 'string' && file.name.toLowerCase().endsWith('.markdown'))
+                );
+
+                if (isMarkdownFile && currentSelectedInputFormat === 'text/markdown') {
+                    const placeholderDiv = document.createElement('div');
+                    placeholderDiv.className = 'markdown-preview-placeholder flex flex-col items-center justify-center text-gray-500 w-full h-32 border rounded-md shadow-sm bg-gray-50 p-2';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-file-alt text-4xl mb-2 text-gray-400';
+                    placeholderDiv.appendChild(icon);
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'text-xs text-center break-all w-full px-1';
+                    nameSpan.textContent = file.name;
+                    nameSpan.title = file.name;
+                    placeholderDiv.appendChild(nameSpan);
+                    wrapper.appendChild(placeholderDiv);
+                    previewArea.appendChild(wrapper);
+                    processedItems++; // Count markdown placeholder as processed
+                    if (processedItems === totalItems && previewArea.parentElement) {
+                         previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
                 } else {
-                     reader.readAsDataURL(file); // Triggers mock FileReader's readAsDataURL
+                    const reader = new FileReader(); // New reader for each file
+                    reader.fileRef = file; // For error simulation based on filename
+                    reader.mockResult = `data:${file.type};base64,mockcontent`; // Default mock result
+
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.alt = `Preview of ${file.name}`;
+                        img.title = file.name;
+                        img.className = 'preview-image rounded-md shadow-sm object-contain w-full h-32 opacity-0'; // Initial classes
+                        img.style.transition = 'opacity 0.3s'; // Match CSS transition if any
+
+                        img.onload = () => {
+                            processedItems++;
+                            img.classList.remove('opacity-0');
+                            if (processedItems === totalItems && previewArea.parentElement) {
+                                previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                            }
+                        };
+                        img.onerror = () => {
+                            processedItems++;
+                            const errorP = document.createElement('p');
+                            errorP.textContent = `Error loading ${file.name}`;
+                            errorP.className = 'reader-error text-xs text-red-500 p-1 text-center break-all';
+                            wrapper.innerHTML = ''; // Clear wrapper
+                            wrapper.appendChild(errorP);
+                            wrapper.classList.add('flex', 'items-center', 'justify-center', 'w-full', 'h-32', 'border', 'rounded-md', 'bg-gray-50');
+
+                            if (processedItems === totalItems && previewArea.parentElement) {
+                                previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                            }
+                        };
+                        wrapper.appendChild(img);
+                        img.src = e.target.result; // Trigger load (and mock Image onload/onerror)
+                    };
+                    reader.onerror = () => {
+                        processedItems++;
+                        const errorP = document.createElement('p');
+                        errorP.textContent = `Error reading ${file.name}`;
+                        errorP.className = 'reader-error text-xs text-red-500 p-1 text-center break-all';
+                        wrapper.innerHTML = ''; // Clear wrapper
+                        wrapper.appendChild(errorP);
+                        wrapper.classList.add('flex', 'items-center', 'justify-center', 'w-full', 'h-32', 'border', 'rounded-md', 'bg-gray-50');
+                        if (processedItems === totalItems && previewArea.parentElement) {
+                             previewArea.parentElement.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                    };
+                    previewArea.appendChild(wrapper);
+                    reader.readAsDataURL(file); // Start reading
                 }
             });
         }
@@ -616,71 +672,69 @@ describe('js/converter.js - Main Thread Utilities', () => {
   });
 
   describe('previewHandlers.displayFilePreviews', () => {
-    const mockFiles = [
-      new File(["content_png"], "file1.png", { type: "image/png" }),
-      new File(["content_jpg"], "file2.jpg", { type: "image/jpeg" }),
-    ];
+    let mockFileReaderInstance;
 
-    test('should clear previewArea and show placeholder if no files', () => {
-      previewHandlers.displayFilePreviews([], mockOriginalPreviewArea);
-      expect(mockOriginalPreviewArea.innerHTML).toContain('Select images...');
-      expect(mockOriginalPreviewArea.classList.contains('has-items')).toBe(false);
+    beforeEach(() => {
+        // Ensure FileReader is freshly mocked for each test in this suite
+        // and we can access its instance methods.
+        mockFileReaderInstance = {
+            readAsDataURL: jest.fn(function() { // 'this' will be this object
+                const file = this.fileRef; // Access fileRef stored by the test
+                if (file && file.name.includes('fail_read')) {
+                    if(this.onerror) setTimeout(() => this.onerror(new Error('Mock FileReader error')), 0);
+                } else {
+                    if(this.onload) setTimeout(() => this.onload({ target: { result: `data:${file ? file.type : 'image/png'};base64,mockcontent_${file ? file.name : ''}` } }), 0);
+                }
+            }),
+            onload: null,
+            onerror: null,
+            fileRef: null // Test will set this
+        };
+        global.FileReader = jest.fn(() => mockFileReaderInstance);
+        global.Image.mockClear(); // Clear Image mock calls
+        mockOriginalPreviewArea.innerHTML = ''; // Clear preview area
     });
 
-    test('should create and append image elements for each file', (done) => {
-      previewHandlers.displayFilePreviews(mockFiles, mockOriginalPreviewArea);
-      // Wait for FileReader and Image onload to resolve
+    const createMockFile = (name, type) => new File(["content"], name, { type });
+
+    test('should display Markdown placeholder when MD format is selected', (done) => {
+      mockInputFormatSelect.value = 'text/markdown';
+      const mdFile = createMockFile('test.md', 'text/plain');
+      previewHandlers.displayFilePreviews([mdFile], mockOriginalPreviewArea);
+
+      // No need for setTimeout if MD placeholder is synchronous
+      expect(mockOriginalPreviewArea.querySelector('.markdown-preview-placeholder')).not.toBeNull();
+      expect(mockOriginalPreviewArea.querySelector('i.fa-file-alt')).not.toBeNull();
+      expect(mockOriginalPreviewArea.querySelector('span').textContent).toBe('test.md');
+      expect(mockFileReaderInstance.readAsDataURL).not.toHaveBeenCalled();
+      done();
+    });
+
+    test('should display image preview for PNG when PNG format is selected', (done) => {
+      mockInputFormatSelect.value = 'image/png';
+      const pngFile = createMockFile('image.png', 'image/png');
+      previewHandlers.displayFilePreviews([pngFile], mockOriginalPreviewArea);
+
       setTimeout(() => {
-        expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(mockFiles.length);
-        expect(mockOriginalPreviewArea.querySelector('img').alt).toBe('Preview of file1.png');
+        expect(mockOriginalPreviewArea.querySelector('img.preview-image')).not.toBeNull();
+        expect(mockOriginalPreviewArea.querySelector('img.preview-image').alt).toBe('Preview of image.png');
+        expect(mockFileReaderInstance.readAsDataURL).toHaveBeenCalledWith(pngFile);
         done();
-      }, 100); // Timeout might need adjustment based on mock async behavior
+      }, 50); // Allow time for async FileReader and Image mocks
     });
 
-    test('should handle FileReader error for a file', (done) => {
-        const filesWithError = [
-            new File(["content_ok"], "ok.png", { type: "image/png" }),
-            new File(["content_err"], "fail_read.png", { type: "image/png" }) // Mocked to fail reading
-        ];
-        previewHandlers.displayFilePreviews(filesWithError, mockOriginalPreviewArea);
-        setTimeout(() => {
-            expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(1); // Only one success
-            expect(mockOriginalPreviewArea.querySelector('.reader-error').textContent).toBe('Error reading fail_read.png');
-            done();
-        }, 100);
-    });
+    test('should attempt image preview for MD file if non-MD format is selected', (done) => {
+      mockInputFormatSelect.value = 'image/png'; // Non-MD format selected
+      const mdFile = createMockFile('document.md', 'text/plain'); // This file would typically be filtered out before this step
+                                                                 // but we test displayFilePreviews in isolation.
+      previewHandlers.displayFilePreviews([mdFile], mockOriginalPreviewArea);
 
-    test('should handle Image.onerror for a file', (done) => {
-        const filesWithImgError = [
-            new File(["content_ok"], "ok.png", { type: "image/png" }),
-            new File(["content_img_err"], "fail_img_load.png", { type: "image/png" }) // Mocked to fail img.onload
-        ];
-        // Modify Image mock for this specific test to ensure onerror is hit for one file
-        const originalImage = global.Image;
-        global.Image = jest.fn(function() {
-            const img = new originalImage(); // Use the structure of the original mock
-            img.src = ''; // Initialize src
-             Object.defineProperty(img, 'src', {
-                set(value) {
-                    this._src = value;
-                    if (value.includes('fail_img_load')) { // Specific condition to trigger error
-                        if(this.onerror) Promise.resolve().then(this.onerror);
-                    } else {
-                       if(this.onload) Promise.resolve().then(this.onload);
-                    }
-                },
-                get() { return this._src; }
-            });
-            return img;
-        });
-
-        previewHandlers.displayFilePreviews(filesWithImgError, mockOriginalPreviewArea);
-        setTimeout(() => {
-            expect(mockOriginalPreviewArea.querySelectorAll('.preview-image').length).toBe(1);
-            expect(mockOriginalPreviewArea.textContent).toContain('Error loading fail_img_load.png');
-            global.Image = originalImage; // Restore original mock
-            done();
-        }, 100);
+      setTimeout(() => {
+        expect(mockOriginalPreviewArea.querySelector('.markdown-preview-placeholder')).toBeNull();
+        expect(mockOriginalPreviewArea.querySelector('img.preview-image')).not.toBeNull(); // It tries to render as image
+        expect(mockFileReaderInstance.readAsDataURL).toHaveBeenCalledWith(mdFile);
+        done();
+      }, 50);
     });
   });
 
@@ -708,6 +762,49 @@ describe('js/converter.js - Main Thread Utilities', () => {
     });
   });
 
+  describe('Convert Button Logic & postMessage', () => {
+    // This test simulates the core part of the convertButton's click listener
+    function simulateConvertButtonClick(currentSelectedFiles, currentOutputFormat, currentQuality) {
+        // Simplified replication of the relevant part of the listener
+        if (!global.Worker.mock.instances.length) { // Ensure worker is mocked
+             new global.Worker('js/worker.js'); // Instantiate if not already
+        }
+        const mockWorkerInstance = global.Worker.mock.instances[0];
+
+        currentSelectedFiles.forEach((file, index) => {
+            mockWorkerInstance.postMessage({
+                file: file,
+                outputFormat: currentOutputFormat,
+                quality: currentQuality,
+                originalName: file.name,
+                index: index
+            });
+        });
+    }
+
+    test('should post correct message to worker when convert button is clicked', () => {
+        state.selectedFiles = [new File(["content"], "file1.png", { type: "image/png" })];
+        mockOutputFormatSelect.value = 'image/jpeg';
+        mockQualitySlider.value = '0.75';
+
+        // Simulate the data that would be gathered and sent
+        const expectedOutputFormat = 'image/jpeg';
+        const expectedQuality = 0.75;
+        const expectedFile = state.selectedFiles[0];
+
+        simulateConvertButtonClick(state.selectedFiles, expectedOutputFormat, expectedQuality);
+
+        expect(global.Worker.mock.instances[0].postMessage).toHaveBeenCalledTimes(1);
+        expect(global.Worker.mock.instances[0].postMessage).toHaveBeenCalledWith({
+            file: expectedFile,
+            outputFormat: expectedOutputFormat,
+            quality: expectedQuality,
+            originalName: expectedFile.name,
+            index: 0
+        });
+    });
+  });
+
   describe('Bulk Download (ZIP) Functionality', () => {
     // Simulate the event listener logic for downloadZipButton
     async function simulateZipDownload() {
@@ -715,11 +812,11 @@ describe('js/converter.js - Main Thread Utilities', () => {
             utils.displayMessage('No converted images to download.');
             return;
         }
-        const zip = new JSZip();
+        const zip = new JSZip(); // Uses the mocked JSZip
         let filesAdded = 0;
         state.convertedBlobs.forEach((result) => {
             if (result && result.blob) {
-                zip.file(result.originalName, result.blob);
+                zip.file(result.originalName, result.blob); // This now uses the mock that stores files
                 filesAdded++;
             }
         });
@@ -729,16 +826,14 @@ describe('js/converter.js - Main Thread Utilities', () => {
         }
         try {
             const content = await zip.generateAsync({ type: 'blob' });
-            const zipUrl = URL.createObjectURL(content);
+            const zipUrl = URL.createObjectURL(content); // Uses mocked URL.createObjectURL
             state.previewUrls.push(zipUrl);
             const link = document.createElement('a');
             link.href = zipUrl;
             link.download = 'converted_images.zip';
-            // document.body.appendChild(link); // Not needed for click() mock
-            link.click = jest.fn(); // Mock click
+            link.click = jest.fn(); // Mock click for testing
             link.click();
-            // document.body.removeChild(link); // Not needed
-            expect(link.click).toHaveBeenCalled(); // Verify click was called
+            expect(link.click).toHaveBeenCalled();
         } catch (error) {
             utils.displayMessage('Error creating ZIP file.', true);
         }

@@ -5,6 +5,7 @@ const assetsToCache = [
   '/css/styles.css',
   '/js/converter.js',
   '/js/worker.js',
+  '/manifest.json', // Added manifest.json to cache
   // External libraries - consider caching local copies in a real app for robustness
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://cdn.tailwindcss.com', // Note: TailwindCSS is often built, but if using CDN for dev, it can be cached
