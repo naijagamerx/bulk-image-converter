@@ -10,10 +10,17 @@
     <meta property="og:description" content="Professional tool to convert images between PNG, JPG and WEBP formats with custom quality settings">
     <meta property="og:type" content="website">
     <title>Bulk Image Converter Pro</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#3b82f6">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/styles.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Image processing libraries -->
+    <script src="https://unpkg.com/tiff.js@1.0.0/tiff.min.js"></script>
+    <!-- bmp-js might be problematic, using a placeholder or will rely on canvas for BMP decoding if possible -->
+    <!-- <script src="https://unpkg.com/bmp-js@0.1.2/browser/bmp.min.js"></script> -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
     <script src="js/converter.js" defer></script>
 </head>
 <body class="bg-gray-100 p-4 md:p-8">
@@ -31,10 +38,18 @@
             </div>
         </header>
 
-        <!-- Main content area -->
-        <div class="bg-white p-6 md:p-8 rounded-lg shadow-md page-content">
+        <!-- Main content area - This will be our drop zone -->
+        <div id="dropZoneArea" class="bg-white p-6 md:p-8 rounded-lg shadow-md page-content relative border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 min-h-[300px] flex flex-col justify-center items-center">
+            <!-- Placeholder text for drop zone -->
+            <div id="dropZonePlaceholder" class="text-center text-gray-500">
+                <i class="fas fa-cloud-upload-alt text-4xl mb-3"></i>
+                <p class="text-lg">Drag & Drop images here</p>
+                <p class="text-sm">or use the selection button below</p>
+            </div>
+
+            <!-- Actual content (initially might be less visible or styled differently if placeholder is active) -->
             <!-- Format selection -->
-            <div class="mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in">
+            <div class="mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in w-full">
                 <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center">
                     <i class="fas fa-exchange-alt text-blue-500 mr-2"></i> 
                     Format Conversion Options
@@ -63,6 +78,26 @@
                                 <input type="radio" name="inputFormat" value="image/webp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
                                 <span class="ml-2 text-sm text-gray-700">WEBP</span>
                             </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="inputFormat" value="image/tiff" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">TIFF</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="inputFormat" value="image/bmp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">BMP</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="inputFormat" value="image/gif" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">GIF</span>
+                            </label>
+                             <label class="inline-flex items-center">
+                                <input type="radio" name="inputFormat" value="image/x-icon" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">ICO</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="inputFormat" value="image/svg+xml" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">SVG</span>
+                            </label>
                         </div>
                     </div>
                     
@@ -88,13 +123,34 @@
                                 <input type="radio" name="outputFormat" value="image/webp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
                                 <span class="ml-2 text-sm text-gray-700">WEBP</span>
                             </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="outputFormat" value="image/tiff" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">TIFF</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="outputFormat" value="image/bmp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">BMP</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="outputFormat" value="image/gif" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">GIF</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="outputFormat" value="image/x-icon" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">ICO</span>
+                            </label>
+                            <!-- SVG as output might be complex if input is raster; for now, let's assume direct conversion if input is SVG or skip for non-SVG inputs -->
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="outputFormat" value="image/svg+xml" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
+                                <span class="ml-2 text-sm text-gray-700">SVG</span>
+                            </label>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- File input section -->
-            <div class="mb-6 animate-fade-in" style="animation-delay: 0.1s;">
+            <div class="mb-6 animate-fade-in w-full" style="animation-delay: 0.1s;">
                 <label for="fileInput" class="block text-sm font-medium text-gray-700 mb-2">Select Images:</label>
                 <div class="relative">
                     <input type="file" id="fileInput" multiple accept="image/png"
@@ -106,13 +162,13 @@
                                   hover:file:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300
                                   cursor-pointer border border-gray-300 rounded-md p-1">
                     <div id="fileInputHint" class="mt-1 text-sm text-gray-500">
-                        Supported formats depend on your selection above
+                        Select input format first. Supported types: PNG, JPG, WEBP, TIFF, BMP, GIF, ICO, SVG. Drag & drop available.
                     </div>
                 </div>
             </div>
 
             <!-- Renaming options -->
-            <div class="mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in" style="animation-delay: 0.2s;">
+            <div class="mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in w-full" style="animation-delay: 0.2s;">
                 <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center">
                     <i class="fas fa-tag text-blue-500 mr-2"></i>
                     Rename Options
@@ -138,7 +194,7 @@
             </div>
 
             <!-- Quality settings -->
-            <div class="flex flex-col md:flex-row items-center justify-between gap-4 mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in" style="animation-delay: 0.3s;">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4 mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 animate-fade-in w-full" style="animation-delay: 0.3s;">
                 <div class="flex-grow w-full md:w-auto">
                     <label for="qualitySlider" class="block text-sm font-medium text-gray-700 mb-1">
                         <span id="qualityLabel">JPEG Quality:</span> <span id="qualityValue">0.8</span>
@@ -154,7 +210,7 @@
             </div>
 
             <!-- Progress area -->
-            <div id="progressArea" class="mb-6 hidden animate-fade-in">
+            <div id="progressArea" class="mb-6 hidden animate-fade-in w-full">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Conversion Progress:</label>
                 <div class="relative pt-1">
                     <progress id="progressBar" value="0" max="100" class="w-full"></progress>
@@ -163,10 +219,10 @@
             </div>
 
             <!-- Messages area -->
-            <div id="messageArea" class="mb-4 p-3 text-center text-red-600 font-medium rounded-md hidden"></div>
+            <div id="messageArea" class="mb-4 p-3 text-center text-red-600 font-medium rounded-md hidden w-full"></div>
 
             <!-- Previews section -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 w-full">
                 <div class="animate-fade-in" style="animation-delay: 0.4s;">
                     <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center">
                         <i class="fas fa-image text-blue-500 mr-2"></i> Original Previews:
@@ -190,7 +246,7 @@
             </div>
 
             <!-- Download area -->
-            <div id="downloadArea" class="mt-6 hidden animate-fade-in" style="animation-delay: 0.6s;">
+            <div id="downloadArea" class="mt-6 hidden animate-fade-in w-full" style="animation-delay: 0.6s;">
                 <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center">
                     <i class="fas fa-download text-blue-500 mr-2"></i> Download Options:
                 </h2>

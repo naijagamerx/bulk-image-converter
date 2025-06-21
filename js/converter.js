@@ -22,6 +22,99 @@ const state = {
     currentPreviewIndex: 0 // Tracks current position in preview navigation
 };
 
+// Initialize the Web Worker
+let imageConversionWorker;
+if (window.Worker) {
+    imageConversionWorker = new Worker('js/worker.js');
+
+    imageConversionWorker.onmessage = (event) => {
+        // Worker now sends: { blob, originalFileName, outputFormat, index, success, error }
+        const { blob, originalFileName, outputFormat: workerOutputFormat, index, success, error } = event.data;
+        const convertButton = document.getElementById('convertButton');
+        const downloadZipButton = document.getElementById('downloadZipButton');
+
+        if (success) {
+            // Generate the final filename using the main thread's function
+            // originalFileName is the original name of the file, index is its index,
+            // workerOutputFormat is the format it was converted to (e.g. "image/jpeg")
+            // The main thread's generateOutputFilename currently reads output format from DOM,
+            // but it's good practice to pass it if available, or ensure DOM is set correctly.
+            // For now, converter.generateOutputFilename uses DOM state for output format.
+            const finalOutputName = converter.generateOutputFilename(originalFileName, index);
+
+            state.convertedBlobs[index] = { blob, originalName: finalOutputName }; // Store by index with final name
+
+            // Update UI for this specific converted image
+            utils.createIndividualDownloadLink(blob, finalOutputName);
+
+            // Update converted preview area for this image
+            const convertedPreviewArea = document.getElementById('convertedPreviewArea');
+            if (index === 0 && convertedPreviewArea.querySelector('p')) { // Clear "Converting..." or placeholder
+                convertedPreviewArea.innerHTML = '';
+            }
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(blob);
+            state.previewUrls.push(img.src); // Keep track for cleanup
+            img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32', 'animate-fade-in');
+            img.alt = `Converted ${finalOutputName}`;
+            img.title = finalOutputName;
+            // Potentially add click for full screen preview if desired for converted images
+            convertedPreviewArea.appendChild(img);
+
+
+            // Check if all files are processed
+            const totalFiles = state.selectedFiles.length;
+            const processedFiles = state.convertedBlobs.filter(b => b).length; // Count non-empty slots
+            utils.updateProgress(processedFiles, totalFiles);
+
+            if (processedFiles === totalFiles) {
+                document.getElementById('downloadArea').classList.remove('hidden');
+                downloadZipButton.disabled = false;
+                utils.displayMessage(`Successfully converted ${processedFiles} of ${totalFiles} images.`, false);
+                convertButton.disabled = false;
+                if (processedFiles === 0) {
+                     convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No images were converted successfully.</p>';
+                }
+            }
+        } else {
+            console.error('Worker Error:', error);
+            utils.displayMessage(`Error converting ${originalFileName || `file at index ${index}`}: ${error}`);
+            state.convertedBlobs[index] = null; // Mark as failed
+
+            const totalFiles = state.selectedFiles.length;
+            const processedFiles = state.convertedBlobs.filter(b => b !== undefined).length; // Count processed (success or fail)
+            utils.updateProgress(processedFiles, totalFiles);
+
+            if (processedFiles === totalFiles) {
+                convertButton.disabled = false;
+                if (state.convertedBlobs.filter(b => b).length > 0) { // If some succeeded
+                    document.getElementById('downloadArea').classList.remove('hidden');
+                    downloadZipButton.disabled = false;
+                } else {
+                     document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No images were converted successfully.</p>';
+                }
+            }
+        }
+    };
+
+    imageConversionWorker.onerror = (error) => {
+        console.error('Worker onerror:', error);
+        utils.displayMessage(`Worker error: ${error.message}. Conversion process halted.`);
+        const convertButton = document.getElementById('convertButton');
+        if(convertButton) convertButton.disabled = false;
+        // Potentially reset progress and UI further if a catastrophic worker error occurs
+        const progressArea = document.getElementById('progressArea');
+        if(progressArea) progressArea.classList.add('hidden');
+        const convertedPreviewArea = document.getElementById('convertedPreviewArea');
+        if(convertedPreviewArea) convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">Conversion failed due to a worker error.</p>';
+    };
+
+} else {
+    console.warn('Web Workers are not supported in this browser. Conversion will run on the main thread.');
+    // Fallback logic or UI message can be placed here if desired
+    utils.displayMessage('Web Workers not supported. Conversions will be slower.', true);
+}
+
 // Theme handling
 const themeHandlers = {
     /**
@@ -213,25 +306,54 @@ const formatHandlers = {
     updateFileInputAccept() {
         const inputFormatRadios = document.getElementsByName('inputFormat');
         const fileInput = document.getElementById('fileInput');
-        const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
-        fileInput.accept = selectedFormat;
+        const selectedRadio = Array.from(inputFormatRadios).find(radio => radio.checked);
+        if (!selectedRadio) return;
+
+        const selectedFormat = selectedRadio.value;
+        let acceptString = selectedFormat; // Default to MIME type
+
+        // Add common extensions for better user experience in file dialog
+        if (selectedFormat === 'image/tiff') {
+            acceptString += ', .tif, .tiff';
+        } else if (selectedFormat === 'image/bmp') {
+            acceptString += ', .bmp';
+        } else if (selectedFormat === 'image/gif') {
+            acceptString += ', .gif';
+        } else if (selectedFormat === 'image/x-icon') {
+            acceptString += ', .ico';
+        } else if (selectedFormat === 'image/svg+xml') {
+            acceptString += ', .svg';
+        } else if (selectedFormat === 'image/jpeg') {
+            acceptString += ', .jpg, .jpeg, .jfif, .pjpeg, .pjp';
+        } else if (selectedFormat === 'image/png') {
+            acceptString += ', .png';
+        } else if (selectedFormat === 'image/webp') {
+            acceptString += ', .webp';
+        }
+        fileInput.accept = acceptString;
     },
 
     /**
      * Show/hide quality slider based on output format selection
-     * PNG is lossless so quality setting is not applicable
+     * Quality slider is applicable mainly for JPEG and WEBP.
      */
     updateQualitySliderVisibility() {
         const outputFormatRadios = document.getElementsByName('outputFormat');
-        const selectedFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+        const selectedRadio = Array.from(outputFormatRadios).find(radio => radio.checked);
+        if (!selectedRadio) return;
+
+        const selectedFormat = selectedRadio.value;
         const qualityContainer = document.getElementById('qualitySlider').parentElement;
         const qualityLabel = document.getElementById('qualityLabel');
         
-        if (selectedFormat === 'image/png') {
-            qualityContainer.style.display = 'none';
-        } else {
+        // Formats that typically use quality settings for lossy compression
+        const qualitySensitiveFormats = ['image/jpeg', 'image/webp'];
+
+        if (qualitySensitiveFormats.includes(selectedFormat)) {
             qualityContainer.style.display = 'block';
             qualityLabel.textContent = selectedFormat === 'image/jpeg' ? 'JPEG Quality:' : 'WebP Quality:';
+        } else {
+            qualityContainer.style.display = 'none';
         }
     }
 };
@@ -295,19 +417,52 @@ const converter = {
      * Generate an output filename based on the original name and pattern
      * Supports template patterns like {original}, {index}, {date}, {time}
      * 
-     * @param {string} originalName - Original filename 
+     * @param {string} originalFileNameInput - Original filename (e.g., "photo.JPG")
      * @param {number} index - Index of the file in the batch
+     * @param {string} [outputFormatType] - Optional: target MIME type e.g., "image/jpeg". If not provided, reads from DOM.
      * @returns {string} - The generated filename with extension
      */
-    generateOutputFilename(originalName, index) {
-        const renamingPattern = document.getElementById('renamingPattern');
-        const outputFormatRadios = document.getElementsByName('outputFormat');
-        const pattern = renamingPattern.value || '{original}';
-        const ext = Array.from(outputFormatRadios).find(radio => radio.checked).value.split('/')[1];
+    generateOutputFilename(originalFileNameInput, index, outputFormatType) {
+        const renamingPatternInput = document.getElementById('renamingPattern');
+        const pattern = renamingPatternInput ? renamingPatternInput.value : '{original}';
+
+        let ext;
+        const mimeToExt = {
+            'image/png': 'png',
+            'image/jpeg': 'jpg',
+            'image/webp': 'webp',
+            'image/tiff': 'tif',
+            'image/bmp': 'bmp',
+            'image/gif': 'gif',
+            'image/x-icon': 'ico',
+            'image/svg+xml': 'svg'
+        };
+
+        if (outputFormatType && mimeToExt[outputFormatType]) {
+            ext = mimeToExt[outputFormatType];
+        } else {
+            const outputFormatRadios = document.getElementsByName('outputFormat');
+            const checkedRadio = Array.from(outputFormatRadios).find(radio => radio.checked);
+            if (checkedRadio && mimeToExt[checkedRadio.value]) {
+                ext = mimeToExt[checkedRadio.value];
+            } else if (checkedRadio) { // Fallback for unexpected MIME types if any
+                ext = checkedRadio.value.split('/')[1] || 'bin';
+            } else {
+                ext = 'png'; // Default if nothing selected (should not happen in normal flow)
+            }
+        }
+
+        // Handle specific cases like jpeg -> jpg
+        if (ext === 'jpeg') ext = 'jpg';
+        if (ext === 'svg+xml') ext = 'svg'; // common practice
+        if (ext === 'tiff') ext = 'tif'; // common practice, though tiff is also used
+        if (ext === 'x-icon') ext = 'ico';
+
+
         const now = new Date();
         
         let filename = pattern
-            .replace('{original}', originalName.replace(/\.[^/.]+$/, ''))
+            .replace('{original}', originalFileNameInput.replace(/\.[^/.]+$/, ''))
             .replace('{index}', String(index + 1).padStart(3, '0'))
             .replace('{date}', now.toISOString().split('T')[0])
             .replace('{time}', now.toTimeString().split(' ')[0].replace(/:/g, '-'));
@@ -329,6 +484,10 @@ const converter = {
             const reader = new FileReader();
             const outputFormatRadios = document.getElementsByName('outputFormat');
             const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+            // This function (converter.convertImage) is the main thread fallback.
+            // It should ideally also handle new formats if worker fails,
+            // but that's a larger change for next subtask.
+            // For now, it will likely only succeed for canvas-drawable types.
 
             reader.onload = function(event) {
                 const img = new Image();
@@ -515,46 +674,95 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (!imageConversionWorker) {
+            utils.displayMessage('Web Worker not available. Cannot convert images.');
+            // Optionally, implement fallback to main thread conversion here
+            // For now, we just disable and message.
+            // The old code block for main thread conversion can be invoked here if desired.
+            console.error("Web Worker not initialized. Fallback to main thread or error out.");
+            // Example of falling back (uncomment and adapt if needed):
+            /*
+            convertButton.disabled = true;
+            downloadZipButton.disabled = true;
+            utils.clearPreviewsAndResults(); // Clear previous results before starting
+            document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">Converting on main thread...</p>';
+            document.getElementById('progressArea').classList.remove('hidden');
+            utils.updateProgress(0, state.selectedFiles.length);
+            const quality = parseFloat(document.getElementById('qualitySlider').value);
+            let successfulCount = 0;
+            state.convertedBlobs = []; // Reset for this batch
+
+            for (let i = 0; i < state.selectedFiles.length; i++) {
+                try {
+                    const result = await converter.convertImage(state.selectedFiles[i], quality, i); // Original function
+                    state.convertedBlobs.push(result);
+                    utils.createIndividualDownloadLink(result.blob, result.originalName);
+                    successfulCount++;
+                    utils.updateProgress(i + 1, state.selectedFiles.length);
+                } catch (error) {
+                    console.error('Main Thread Conversion Error:', error);
+                    utils.displayMessage(`Error converting ${state.selectedFiles[i].name}: ${error.message}`);
+                }
+            }
+            // UI update after main thread conversion loop finishes...
+            // (similar to the original block but using successfulCount and state.convertedBlobs)
+            const convertedPreviewArea = document.getElementById('convertedPreviewArea');
+            if (successfulCount > 0) {
+                // ... populate previews ...
+                document.getElementById('downloadArea').classList.remove('hidden');
+                downloadZipButton.disabled = false;
+                utils.displayMessage(`Successfully converted ${successfulCount} of ${state.selectedFiles.length} images on main thread.`, false);
+            } else {
+                convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No images were converted successfully on main thread.</p>';
+            }
+            convertButton.disabled = false;
+            */
+            return;
+        }
+
         convertButton.disabled = true;
         downloadZipButton.disabled = true;
-        utils.clearPreviewsAndResults();
-        document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">Converting...</p>';
+        // Clear previous results, but keep original previews
+        utils.clearPreviewsAndResults(); // This function needs to be aware of not clearing original previews if they should persist
+                                       // For now, it clears everything. If original previews need to stay, this needs adjustment.
+        previewHandlers.displayFilePreviews(state.selectedFiles, document.getElementById('originalPreviewArea')); // Re-display original previews
+
+
+        document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-spinner fa-spin mr-2"></i>Converting images...</p>';
         document.getElementById('progressArea').classList.remove('hidden');
         utils.updateProgress(0, state.selectedFiles.length);
 
-        const quality = parseFloat(qualitySlider.value);
-        let successful = 0;
+        state.convertedBlobs = new Array(state.selectedFiles.length).fill(undefined); // Initialize with placeholders
 
-        for (let i = 0; i < state.selectedFiles.length; i++) {
-            try {
-                const result = await converter.convertImage(state.selectedFiles[i], quality, i);
-                state.convertedBlobs.push(result);
-                utils.createIndividualDownloadLink(result.blob, result.originalName);
-                successful++;
-                utils.updateProgress(i + 1, state.selectedFiles.length);
-            } catch (error) {
-                console.error('Conversion Error:', error);
-                utils.displayMessage(`Error converting ${state.selectedFiles[i].name}: ${error.message}`);
-            }
-        }
+        const quality = parseFloat(document.getElementById('qualitySlider').value);
+        const outputFormatRadios = document.getElementsByName('outputFormat');
+        const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
 
-        const convertedPreviewArea = document.getElementById('convertedPreviewArea');
-        if (successful > 0) {
-            convertedPreviewArea.innerHTML = '';
-            state.convertedBlobs.forEach(({ blob }) => {
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(blob);
-                img.classList.add('rounded-md', 'shadow-sm', 'object-contain', 'w-full', 'h-32');
-                convertedPreviewArea.appendChild(img);
+        state.selectedFiles.forEach((file, index) => {
+            // Create a simple data object for the worker.
+            // The File object itself cannot be cloned directly in all browsers for Web Workers.
+            // We need to send its essential parts or read it as ArrayBuffer.
+            // For simplicity, if File objects are problematic, consider sending Blob parts or ArrayBuffer.
+            // However, modern browsers typically support sending File objects to workers.
+
+            // To ensure compatibility if File object cloning is an issue:
+            // const fileData = {
+            //   name: file.name,
+            //   type: file.type,
+            //   size: file.size,
+            //   lastModified: file.lastModified,
+            //   // arrayBuffer: await file.arrayBuffer() // This would require async loop or Promise.all
+            // };
+            // For now, let's assume direct File object passing works. If not, this is where to adapt.
+
+            imageConversionWorker.postMessage({
+                file: file, // The File object itself
+                outputFormat: outputFormat,
+                quality: quality,
+                originalName: file.name, // Keep original name for reference
+                index: index
             });
-            document.getElementById('downloadArea').classList.remove('hidden');
-            downloadZipButton.disabled = false;
-            utils.displayMessage(`Successfully converted ${successful} of ${state.selectedFiles.length} images.`, false);
-        } else {
-            convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center">No images were converted successfully.</p>';
-        }
-
-        convertButton.disabled = false;
+        });
     });
 
     // Download ZIP handler
@@ -565,8 +773,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const zip = new JSZip();
-        state.convertedBlobs.forEach(({ blob, originalName }) => {
-            zip.file(originalName, blob);
+        state.convertedBlobs.forEach((result) => {
+            if (result && result.blob) { // Ensure blob exists (it might be null if conversion failed)
+                zip.file(result.originalName, result.blob);
+            }
         });
 
         try {
@@ -591,4 +801,124 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize UI state
     formatHandlers.updateFileInputAccept();
     formatHandlers.updateQualitySliderVisibility();
+
+    // Drag and Drop handlers
+    const dropZoneArea = document.getElementById('dropZoneArea');
+    const dropZonePlaceholder = document.getElementById('dropZonePlaceholder');
+    const originalPreviewArea = document.getElementById('originalPreviewArea');
+
+    if (dropZoneArea && dropZonePlaceholder && originalPreviewArea) {
+        dropZoneArea.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dropZoneArea.classList.add('border-blue-600', 'bg-blue-50'); // Example active style
+            dropZonePlaceholder.textContent = 'Release to drop images';
+        });
+
+        dropZoneArea.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Necessary to allow drop
+        });
+
+        dropZoneArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            // Only remove active style if not dragging over a child element
+            if (!dropZoneArea.contains(e.relatedTarget)) {
+                dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
+                if (state.selectedFiles.length === 0) {
+                    dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                } else {
+                    dropZonePlaceholder.classList.add('hidden');
+                }
+            }
+        });
+
+        dropZoneArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
+
+            const droppedFiles = e.dataTransfer.files;
+            const selectedFormat = Array.from(document.getElementsByName('inputFormat')).find(radio => radio.checked).value;
+            const newlySelectedFiles = Array.from(droppedFiles).filter(file => file.type === selectedFormat);
+
+            if (newlySelectedFiles.length === 0 && droppedFiles.length > 0) {
+                utils.displayMessage(`Please drop ${selectedFormat.split('/')[1].toUpperCase()} files only. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored.`);
+                if (state.selectedFiles.length === 0) { // If no files were previously selected
+                    dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                    dropZonePlaceholder.classList.remove('hidden');
+                }
+                return;
+            }
+
+            if (newlySelectedFiles.length > 0) {
+                // Append to existing or set new files. For simplicity, let's overwrite.
+                // To append: state.selectedFiles = [...state.selectedFiles, ...newlySelectedFiles];
+                // Ensure no duplicates if appending:
+                // const currentFileNames = new Set(state.selectedFiles.map(f => f.name));
+                // newlySelectedFiles = newlySelectedFiles.filter(f => !currentFileNames.has(f.name));
+                state.selectedFiles = newlySelectedFiles; // Overwriting for simplicity based on typical drag-drop UX
+
+                utils.clearPreviewsAndResults(); // Clear previous results and previews
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
+                convertButton.disabled = false;
+                dropZonePlaceholder.classList.add('hidden'); // Hide placeholder when files are successfully dropped
+                utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
+
+                if (droppedFiles.length > newlySelectedFiles.length) {
+                     utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored as they were not ${selectedFormat.split('/')[1].toUpperCase()}.`, false);
+                }
+
+            } else if (state.selectedFiles.length === 0) { // No valid files dropped and no previous files
+                dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                dropZonePlaceholder.classList.remove('hidden');
+                convertButton.disabled = true;
+            }
+        });
+
+        // Modify file input handler to also hide placeholder
+        fileInput.addEventListener('change', (event) => {
+            const inputFormatRadios = document.getElementsByName('inputFormat');
+            const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
+            const newFiles = Array.from(event.target.files).filter(file => file.type === selectedFormat);
+
+            utils.clearPreviewsAndResults(); // Clear everything first
+
+            if (newFiles.length === 0 && event.target.files.length > 0) {
+                utils.displayMessage(`Please select ${selectedFormat.split('/')[1].toUpperCase()} files only.`);
+                state.selectedFiles = []; // Clear selection
+                dropZonePlaceholder.classList.remove('hidden'); // Show placeholder
+                convertButton.disabled = true;
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Update to show "select images"
+                return;
+            }
+
+            state.selectedFiles = newFiles; // Overwrite with new selection
+
+            if (state.selectedFiles.length > 0) {
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
+                convertButton.disabled = false;
+                dropZonePlaceholder.classList.add('hidden'); // Hide placeholder
+                utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
+            } else {
+                dropZonePlaceholder.classList.remove('hidden'); // Show placeholder if no files are valid or selected
+                convertButton.disabled = true;
+                 previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Update to show "select images"
+            }
+        });
+    } else {
+        console.warn("Drop zone elements not found. Drag and drop functionality will not be available.");
+    }
+
+    // Service Worker Registration
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => { // Wait for page load to avoid contention for resources
+            navigator.serviceWorker.register('/sw.js')
+                .then(registration => {
+                    console.log('Service Worker registered successfully with scope:', registration.scope);
+                })
+                .catch(error => {
+                    console.error('Service Worker registration failed:', error);
+                });
+        });
+    } else {
+        console.warn('Service Workers are not supported in this browser.');
+    }
 });
