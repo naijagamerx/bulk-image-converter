@@ -205,48 +205,87 @@ global.self.jspdf = {
 // The actual execution of these tests would require that refactoring
 // or a more complex test runner setup (e.g., loading file content and eval'ing).
 
-describe('js/worker.js - Image Conversion Logic', () => {
-  let convertImageOnWorker; // This would be the function from worker.js
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+// Path to worker scripts
+const imageConverterPath = path.resolve(__dirname, '../js/worker/imageConverter.js');
+const markdownConverterPath = path.resolve(__dirname, '../js/worker/markdownConverter.js');
+const mainWorkerPath = path.resolve(__dirname, '../js/worker/mainWorker.js');
+
+// Read script contents
+const imageConverterCode = fs.readFileSync(imageConverterPath, 'utf8');
+const markdownConverterCode = fs.readFileSync(markdownConverterPath, 'utf8');
+const mainWorkerCode = fs.readFileSync(mainWorkerPath, 'utf8');
+
+// Combine scripts to simulate importScripts
+const combinedWorkerCode = `
+  ${imageConverterCode}
+  ${markdownConverterCode}
+  ${mainWorkerCode}
+`;
+
+const script = new vm.Script(combinedWorkerCode);
+
+describe('js/worker/mainWorker.js - Worker Logic', () => {
+  let workerContext;
 
   beforeEach(() => {
     // Reset mocks before each test
     jest.clearAllMocks();
 
-    // Manually defining convertImageOnWorker for testing based on its structure
-    // This is a workaround for not being able to import directly.
-    // Ideally, worker.js would export this function.
-    // This is a simplified version of the actual worker's function,
-    // focusing on the parts we can test with mocks.
-    // This is a workaround. Ideally, worker.js would be a module.
-    // The dynamic loading via 'vm' at the end of the file attempts to make the real function available.
-    if (module.exports.convertImageOnWorker && typeof module.exports.convertImageOnWorker === 'function') {
-        convertImageOnWorker = module.exports.convertImageOnWorker;
-    } else {
-        console.warn("Warning: convertImageOnWorker could not be loaded from worker.js. Using a dummy function for tests. Worker.js may need refactoring for proper testing (e.g., using module.exports).");
-        convertImageOnWorker = jest.fn().mockResolvedValue(new Blob(['dummy'], {type: 'image/dummy'}));
+    // Setup a fresh context for each test to simulate worker environment
+    workerContext = {
+      self: {
+        postMessage: jest.fn(),
+        // Include other self properties if mainWorker directly uses them, e.g. self.ImageData = ...
+        // The global mocks for FileReader, Image, Tiff, marked, jspdf, OffscreenCanvas will be available.
+      },
+      console: console, // For debugging if worker logs anything
+      // Expose global mocks to the worker context explicitly if they are not picked up from `global` by vm
+      FileReader: global.FileReader,
+      Image: global.Image,
+      OffscreenCanvas: global.OffscreenCanvas,
+      Tiff: global.Tiff,
+      marked: global.self.marked, // Use the mocked self.marked
+      jspdf: global.self.jspdf,   // Use the mocked self.jspdf
+      // Any other specific globals the worker scripts might expect on `self` or globally
+    };
+
+    // Run the combined script in the new context
+    // This will define self.onmessage and other helper functions on workerContext.self
+    script.runInNewContext(workerContext);
+  });
+
+  // Helper function to simulate message passing to the worker
+  const postMessageToWorker = (payload) => {
+    if (typeof workerContext.self.onmessage !== 'function') {
+      throw new Error('workerContext.self.onmessage is not defined or not a function. Worker script might not have loaded correctly.');
     }
-  });
+    workerContext.self.onmessage({ data: payload });
+  };
 
-  test('SVG to SVG pass-through should resolve with the original file', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping SVG pass-through test as worker function is dummied/not loaded."); return; }
+  test('SVG to SVG pass-through should post back the original file', async () => {
     const mockFile = new File(['<svg></svg>'], 'test.svg', { type: 'image/svg+xml' });
-    const resultBlob = await convertImageOnWorker(mockFile, 'image/svg+xml', 1);
-    expect(resultBlob.type).toBe('image/svg+xml');
-    expect(resultBlob.size).toBe(mockFile.size);
-    expect(resultBlob).toBe(mockFile);
+    const payload = { file: mockFile, outputFormat: 'image/svg+xml', quality: 1, originalName: 'test.svg', index: 0 };
+
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick); // Allow async operations in worker to complete
+
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      blob: mockFile, // Expecting the same file object back
+      name: 'test.svg',
+      index: 0
+    }));
   });
 
-  test('PNG to JPEG conversion should utilize canvas', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping PNG to JPEG test as worker function is dummied/not loaded."); return; }
-
+  test('PNG to JPEG conversion should utilize canvas and postMessage result', async () => {
     const mockFile = new File(['fake_png_data'], 'test.png', { type: 'image/png' });
+    const payload = { file: mockFile, outputFormat: 'image/jpeg', quality: 0.8, originalName: 'test.png', index: 0 };
 
-    // FileReader mock will be used. Ensure its mockResult or default behavior is suitable.
-    // Image mock will be used. Ensure its onload is triggered.
-
-    const resultBlob = await convertImageOnWorker(mockFile, 'image/jpeg', 0.8);
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick); // Allow promises from mocks & worker to settle
 
     expect(FileReader).toHaveBeenCalledTimes(1);
     const frInstance = FileReader.mock.instances[0];
@@ -276,54 +315,58 @@ describe('js/worker.js - Image Conversion Logic', () => {
   });
 
   test('TIFF to PNG conversion should utilize Tiff.js and canvas', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping TIFF to PNG test as worker function is dummied/not loaded."); return; }
-
     const mockFile = new File(['fake_tiff_data'], 'test.tif', { type: 'image/tiff' });
     mockFile.arrayBuffer = jest.fn().mockResolvedValue(new ArrayBuffer(8)); // Mock arrayBuffer for TIFF
+    const payload = { file: mockFile, outputFormat: 'image/png', quality: 1, originalName: 'test.tif', index: 0 };
 
-    const resultBlob = await convertImageOnWorker(mockFile, 'image/png', 1);
-
-    await Promise.resolve();
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick); // Allow async operations
 
     expect(mockFile.arrayBuffer).toHaveBeenCalled();
     expect(Tiff).toHaveBeenCalledTimes(1);
     expect(Tiff.mock.instances[0].toCanvas).toHaveBeenCalledTimes(1);
 
-    // fillRect should not be called for PNG background
-    // This check depends on context reuse; if new canvas for background, this check needs care
-    // For PNG output, fillRect is not called for background.
-    // The current logic of processSourceCanvasToBlob might call it if the source canvas was reused.
-    // Let's assume for PNG output, no fillRect for background is explicitly done on the final canvas.
-    // This needs to align with how `processSourceCanvasToBlob` handles non-JPEG/BMP outputs.
-    // Based on current `processSourceCanvasToBlob`, fillRect is only for JPEG/BMP output.
-    const contextInstances = mockGetContext.mock.results.map(r => r.value);
-    const fillRectCalls = contextInstances.reduce((acc, ctx) => acc + ctx.fillRect.mock.calls.length, 0);
-    //expect(fillRectCalls).toBe(0); // This might be too strict if intermediate canvases are used.
-                                   // For PNG output, the specific backgrounding step is skipped.
+    // fillRect should not be called for PNG background (specific to this conversion path)
+    // This depends on how many new canvases are created and used by the conversion logic.
+    // We assume the final canvas for PNG output does not get a fillRect for background.
+    // const contextInstances = mockGetContext.mock.results.map(r => r.value);
+    // const fillRectCalls = contextInstances.reduce((acc, ctx) => acc + ctx.fillRect.mock.calls.length, 0);
+    // For this test, let's be less strict about fillRect count due to potential intermediate canvases.
+    // The main check is that the Tiff object was used and output is PNG.
 
-    if (global.OffscreenCanvas && typeof OffscreenCanvas !== 'function' && OffscreenCanvas.mock.instances.length > 0 && OffscreenCanvas.mock.instances[0].convertToBlob) {
-        expect(mockConvertToBlob).toHaveBeenCalledWith({ type: 'image/png', quality: undefined });
+    if (global.OffscreenCanvas && OffscreenCanvas.mock.instances && OffscreenCanvas.mock.instances.length > 0 && OffscreenCanvas.mock.instances[0].convertToBlob) {
+        expect(mockConvertToBlob).toHaveBeenCalledWith({ type: 'image/png' }); // Quality undefined for PNG
     } else {
         expect(mockToBlob).toHaveBeenCalledWith(expect.any(Function), 'image/png', undefined);
     }
-    expect(resultBlob.type).toBe('image/png');
+
+    expect(workerContext.self.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      blob: expect.any(Blob),
+      name: 'test.tif',
+      index: 0,
+      type: 'image/png'
+    }));
+    const postedBlob = workerContext.self.postMessage.mock.calls[0][0].blob;
+    expect(postedBlob.type).toBe('image/png');
   });
 
   test('Markdown to PNG conversion should use marked and render HTML to canvas', async () => {
-    if (convertImageOnWorker.getMockName() === 'jest.fn()') {
-        console.warn("Skipping MD to PNG test as worker function is dummied/not loaded."); return; }
-
     const mockMarkdown = '# Hello';
     const mockFile = new File([mockMarkdown], 'test.md', { type: 'text/markdown' });
+    const payload = { file: mockFile, outputFormat: 'image/png', quality: 1, originalName: 'test.md', index: 0 };
 
-    // Ensure FileReader mock is set up for readAsText
+    // Specific mock for FileReader for this test to ensure it returns the markdown content
     const mockReaderInstance = new FileReader();
-    mockReaderInstance.readAsText.mockImplementationOnce(function() { this.onload({ target: { result: mockMarkdown } }); });
-    FileReader.mockImplementationOnce(() => mockReaderInstance); // Use this instance for this test
+    mockReaderInstance.readAsText = jest.fn().mockImplementationOnce(function() {
+        this.result = mockMarkdown; // Set result directly
+        if (this.onload) { this.onload({ target: { result: this.result } }); }
+    });
+    FileReader.mockImplementationOnce(() => mockReaderInstance);
 
-    const resultBlob = await convertImageOnWorker(mockFile, 'image/png', 1);
+    postMessageToWorker(payload);
+    await new Promise(process.nextTick);
 
+    expect(FileReader).toHaveBeenCalledTimes(1); // Expect the specific mock to be used
     expect(mockReaderInstance.readAsText).toHaveBeenCalledWith(mockFile);
     expect(self.marked.parse).toHaveBeenCalledWith(mockMarkdown);
 
