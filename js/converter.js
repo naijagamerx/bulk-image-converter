@@ -189,6 +189,10 @@ const utils = {
     clearPreviewsAndResults() {
         // Revoke any existing preview URLs to prevent memory leaks
         state.previewUrls.forEach(url => URL.revokeObjectURL(url));
+
+        // Clear state arrays
+        state.selectedFiles = [];
+        state.convertedBlobs = [];
         state.previewUrls = [];
         
         // Reset preview areas
@@ -298,18 +302,40 @@ const fullScreenPreview = {
 };
 
 // Format handling
+
+const formatCompatibility = {
+    'image/png': ['image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
+    'image/jpeg': ['image/png', 'image/webp', 'image/bmp', 'image/gif'],
+    'image/webp': ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'],
+    'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'], // Decoded to canvas first
+    'image/bmp': ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'], // Static from canvas
+    'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'],
+    'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'] // Decoded to canvas first
+};
+
+const formatDisplayNames = {
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/webp': 'WEBP',
+    'image/bmp': 'BMP',
+    'image/gif': 'GIF',
+    'image/svg+xml': 'SVG',
+    'image/tiff': 'TIFF',
+    'image/x-icon': 'ICO'
+};
+
 const formatHandlers = {
     /**
      * Update the file input's accept attribute based on selected input format
      * This filters the file picker dialog to show only relevant files
      */
     updateFileInputAccept() {
-        const inputFormatRadios = document.getElementsByName('inputFormat');
+        const inputFormatSelect = document.getElementById('inputFormatSelect');
         const fileInput = document.getElementById('fileInput');
-        const selectedRadio = Array.from(inputFormatRadios).find(radio => radio.checked);
-        if (!selectedRadio) return;
+        if (!inputFormatSelect || !fileInput) return;
 
-        const selectedFormat = selectedRadio.value;
+        const selectedFormat = inputFormatSelect.value;
         let acceptString = selectedFormat; // Default to MIME type
 
         // Add common extensions for better user experience in file dialog
@@ -338,11 +364,10 @@ const formatHandlers = {
      * Quality slider is applicable mainly for JPEG and WEBP.
      */
     updateQualitySliderVisibility() {
-        const outputFormatRadios = document.getElementsByName('outputFormat');
-        const selectedRadio = Array.from(outputFormatRadios).find(radio => radio.checked);
-        if (!selectedRadio) return;
+        const outputFormatSelect = document.getElementById('outputFormatSelect');
+        if (!outputFormatSelect) return;
 
-        const selectedFormat = selectedRadio.value;
+        const selectedFormat = outputFormatSelect.value;
         const qualityContainer = document.getElementById('qualitySlider').parentElement;
         const qualityLabel = document.getElementById('qualityLabel');
         
@@ -355,6 +380,48 @@ const formatHandlers = {
         } else {
             qualityContainer.style.display = 'none';
         }
+    },
+
+    /**
+     * Update the output format dropdown based on the selected input format.
+     */
+    updateOutputFormatDropdown() {
+        const inputFormatSelect = document.getElementById('inputFormatSelect');
+        const outputFormatSelect = document.getElementById('outputFormatSelect');
+        if (!inputFormatSelect || !outputFormatSelect) return;
+
+        const selectedInputFormat = inputFormatSelect.value;
+        const compatibleOutputs = formatCompatibility[selectedInputFormat] ||
+                                  Object.keys(formatDisplayNames).filter(k => k !== 'image/tiff' && k !== 'image/x-icon'); // Default if not in map
+
+        const currentOutputValue = outputFormatSelect.value;
+        outputFormatSelect.innerHTML = ''; // Clear existing options
+
+        compatibleOutputs.forEach(mimeType => {
+            if (formatDisplayNames[mimeType]) { // Ensure it's a known displayable format
+                const option = document.createElement('option');
+                option.value = mimeType;
+                option.textContent = formatDisplayNames[mimeType];
+                outputFormatSelect.appendChild(option);
+            }
+        });
+
+        // Try to restore previous selection or set a sensible default
+        if (compatibleOutputs.includes(currentOutputValue)) {
+            outputFormatSelect.value = currentOutputValue;
+        } else if (compatibleOutputs.length > 0) {
+            // Default to JPEG if available and input is not JPEG, else PNG, else first in list
+            if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
+                outputFormatSelect.value = 'image/jpeg';
+            } else if (compatibleOutputs.includes('image/png')) {
+                outputFormatSelect.value = 'image/png';
+            } else {
+                outputFormatSelect.value = compatibleOutputs[0];
+            }
+        }
+
+        // After updating dropdown, ensure quality slider visibility is also updated
+        formatHandlers.updateQualitySliderVisibility();
     }
 };
 
@@ -441,14 +508,13 @@ const converter = {
         if (outputFormatType && mimeToExt[outputFormatType]) {
             ext = mimeToExt[outputFormatType];
         } else {
-            const outputFormatRadios = document.getElementsByName('outputFormat');
-            const checkedRadio = Array.from(outputFormatRadios).find(radio => radio.checked);
-            if (checkedRadio && mimeToExt[checkedRadio.value]) {
-                ext = mimeToExt[checkedRadio.value];
-            } else if (checkedRadio) { // Fallback for unexpected MIME types if any
-                ext = checkedRadio.value.split('/')[1] || 'bin';
+            const outputFormatSelect = document.getElementById('outputFormatSelect');
+            if (outputFormatSelect && mimeToExt[outputFormatSelect.value]) {
+                ext = mimeToExt[outputFormatSelect.value];
+            } else if (outputFormatSelect) { // Fallback for unexpected MIME types if any
+                ext = outputFormatSelect.value.split('/')[1] || 'bin';
             } else {
-                ext = 'png'; // Default if nothing selected (should not happen in normal flow)
+                ext = 'png'; // Default if somehow outputFormatSelect is not found
             }
         }
 
@@ -482,8 +548,9 @@ const converter = {
     convertImage(file, quality, index) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            const outputFormatRadios = document.getElementsByName('outputFormat');
-            const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+            const outputFormatSelect = document.getElementById('outputFormatSelect');
+            const outputFormat = outputFormatSelect ? outputFormatSelect.value : 'image/jpeg'; // Default if somehow not found
+
             // This function (converter.convertImage) is the main thread fallback.
             // It should ideally also handle new formats if worker fails,
             // but that's a larger change for next subtask.
@@ -592,25 +659,34 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Format selection handlers
-    const inputFormatRadios = document.getElementsByName('inputFormat');
-    const outputFormatRadios = document.getElementsByName('outputFormat');
+    const inputFormatSelect = document.getElementById('inputFormatSelect');
+    const outputFormatSelect = document.getElementById('outputFormatSelect');
     const fileInput = document.getElementById('fileInput');
     const convertButton = document.getElementById('convertButton');
     const qualitySlider = document.getElementById('qualitySlider');
     const qualityValue = document.getElementById('qualityValue');
     const downloadZipButton = document.getElementById('downloadZipButton');
 
-    inputFormatRadios.forEach(radio => {
-        radio.addEventListener('change', () => {
+    if (inputFormatSelect) {
+        inputFormatSelect.addEventListener('change', () => {
             formatHandlers.updateFileInputAccept();
-            fileInput.value = '';
+            formatHandlers.updateOutputFormatDropdown(); // Update output dropdown based on new input
+            if (fileInput) fileInput.value = '';
             utils.clearPreviewsAndResults();
+            const dropZonePlaceholder = document.getElementById('dropZonePlaceholder');
+            if (dropZonePlaceholder) {
+                 dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                 dropZonePlaceholder.classList.remove('hidden');
+            }
+            if(convertButton) convertButton.disabled = true;
         });
-    });
+    }
 
-    outputFormatRadios.forEach(radio => {
-        radio.addEventListener('change', formatHandlers.updateQualitySliderVisibility);
-    });
+    if (outputFormatSelect) {
+        // When output format changes, only quality slider visibility needs update.
+        // The actual list of options is dictated by input format.
+        outputFormatSelect.addEventListener('change', formatHandlers.updateQualitySliderVisibility);
+    }
 
     // Modal handlers
     const aboutBtn = document.getElementById('aboutBtn');
@@ -644,24 +720,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // File input handler
-    fileInput.addEventListener('change', (event) => {
-        const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
-        state.selectedFiles = Array.from(event.target.files).filter(file => file.type === selectedFormat);
-        
-        utils.clearPreviewsAndResults();
-
-        if (state.selectedFiles.length === 0 && event.target.files.length > 0) {
-            utils.displayMessage(`Please select ${selectedFormat.split('/')[1].toUpperCase()} files only.`);
-            return;
-        }
-
-        if (state.selectedFiles.length > 0) {
-            previewHandlers.displayFilePreviews(state.selectedFiles, document.getElementById('originalPreviewArea'));
-            convertButton.disabled = false;
-        }
-    });
-
+    // File input handler - This is now part of the Drag and Drop handler section to ensure DOM elements are loaded
+    // The original fileInput listener is modified and integrated within the DOMContentLoaded's Drag and Drop section further down.
     // Quality slider
     qualitySlider.addEventListener('input', (e) => {
         qualityValue.textContent = e.target.value;
@@ -722,21 +782,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
         convertButton.disabled = true;
         downloadZipButton.disabled = true;
-        // Clear previous results, but keep original previews
-        utils.clearPreviewsAndResults(); // This function needs to be aware of not clearing original previews if they should persist
-                                       // For now, it clears everything. If original previews need to stay, this needs adjustment.
-        previewHandlers.displayFilePreviews(state.selectedFiles, document.getElementById('originalPreviewArea')); // Re-display original previews
+        // Clear previous results and previews.
+        // Since utils.clearPreviewsAndResults() now also clears state.selectedFiles,
+        // we must call it *before* we intend to use state.selectedFiles for displaying original previews.
+        // This means the original previews will be cleared and then re-rendered if files are still "selected" conceptually.
+        // However, fileInput.onchange and drop handlers *re-assign* state.selectedFiles *after* calling clearPreviewsAndResults.
+        // The convertButton handler uses the *current* state.selectedFiles.
+        // So, the order in convertButton should be:
+        // 1. If we need to preserve original selected files for this conversion batch, ensure they are captured.
+        // 2. THEN call utils.clearPreviewsAndResults() which clears DOM areas for converted results & selectedFiles state.
+        // 3. THEN re-populate original previews if needed (which it does via displayFilePreviews).
+        // The current `utils.clearPreviewsAndResults()` will reset `state.selectedFiles`.
+        // If `convertButton` is clicked, it implies we want to convert the *currently selected files*.
+        // So, `state.selectedFiles` should NOT be cleared by `utils.clearPreviewsAndResults` if it's called
+        // *within* the convertButton handler before processing.
+        // Let's adjust where `state.selectedFiles` is cleared.
+        // It should be cleared when new files are chosen (input 'change', 'drop'), or when explicitly resetting the whole app.
+        // For `convertButton` click, we only want to clear *previous conversion results*, not the current selection.
 
+        // So, utils.clearPreviewsAndResults should only clear results, not current selection.
+        // Let's refine utils.clearPreviewsAndResults to NOT clear state.selectedFiles.
+        // Instead, state.selectedFiles will be explicitly cleared by file input/drop handlers.
+
+        // In `convertButton` handler:
+        // Clear only previous *converted* results and their previews/links.
+        const convertedPreviewArea = document.getElementById('convertedPreviewArea');
+        convertedPreviewArea.innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-wand-magic-sparkles mr-2"></i> Converted previews will appear here.</p>';
+        const individualLinksArea = document.getElementById('individualLinksArea');
+        individualLinksArea.innerHTML = '';
+        document.getElementById('downloadArea').classList.add('hidden');
+        document.getElementById('downloadZipButton').disabled = true;
+        state.convertedBlobs = []; // Explicitly clear previous converted blobs for this new batch.
+        state.previewUrls.forEach(url => URL.revokeObjectURL(url)); // Clear old blob URLs for converted images
+        state.previewUrls = []; // Reset preview URLs related to converted images
+
+        // Re-display original previews for clarity (they are not cleared here)
+        previewHandlers.displayFilePreviews(state.selectedFiles, document.getElementById('originalPreviewArea'));
 
         document.getElementById('convertedPreviewArea').innerHTML = '<p class="text-sm text-gray-500 col-span-full text-center flex items-center justify-center h-full"><i class="fas fa-spinner fa-spin mr-2"></i>Converting images...</p>';
         document.getElementById('progressArea').classList.remove('hidden');
+        // Initialize progress based on the actual number of files to be processed in this batch
         utils.updateProgress(0, state.selectedFiles.length);
 
-        state.convertedBlobs = new Array(state.selectedFiles.length).fill(undefined); // Initialize with placeholders
+        // Ensure state.convertedBlobs is an array of the correct size for the current selection
+        state.convertedBlobs = new Array(state.selectedFiles.length).fill(undefined);
 
         const quality = parseFloat(document.getElementById('qualitySlider').value);
-        const outputFormatRadios = document.getElementsByName('outputFormat');
-        const outputFormat = Array.from(outputFormatRadios).find(radio => radio.checked).value;
+        const outputFormatValue = document.getElementById('outputFormatSelect').value;
 
         state.selectedFiles.forEach((file, index) => {
             // Create a simple data object for the worker.
@@ -800,7 +892,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize UI state
     formatHandlers.updateFileInputAccept();
-    formatHandlers.updateQualitySliderVisibility();
+    // formatHandlers.updateQualitySliderVisibility(); // This will be called by updateOutputFormatDropdown
+    formatHandlers.updateOutputFormatDropdown(); // Initial population of output dropdown
 
     // Drag and Drop handlers
     const dropZoneArea = document.getElementById('dropZoneArea');
@@ -836,11 +929,11 @@ document.addEventListener('DOMContentLoaded', () => {
             dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
 
             const droppedFiles = e.dataTransfer.files;
-            const selectedFormat = Array.from(document.getElementsByName('inputFormat')).find(radio => radio.checked).value;
-            const newlySelectedFiles = Array.from(droppedFiles).filter(file => file.type === selectedFormat);
+            const currentInputFormat = document.getElementById('inputFormatSelect').value;
+            const newlySelectedFiles = Array.from(droppedFiles).filter(file => file.type === currentInputFormat);
 
             if (newlySelectedFiles.length === 0 && droppedFiles.length > 0) {
-                utils.displayMessage(`Please drop ${selectedFormat.split('/')[1].toUpperCase()} files only. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored.`);
+                utils.displayMessage(`Please drop ${currentInputFormat.split('/')[1].toUpperCase()} files only. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored.`);
                 if (state.selectedFiles.length === 0) { // If no files were previously selected
                     dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
                     dropZonePlaceholder.classList.remove('hidden');
@@ -873,36 +966,77 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Modify file input handler to also hide placeholder
-        fileInput.addEventListener('change', (event) => {
-            const inputFormatRadios = document.getElementsByName('inputFormat');
-            const selectedFormat = Array.from(inputFormatRadios).find(radio => radio.checked).value;
-            const newFiles = Array.from(event.target.files).filter(file => file.type === selectedFormat);
+        // Modify file input handler:
+        // It should clear all previous state (selected files, converted blobs, previews)
+        // before processing the new selection.
+        if(fileInput) { // Ensure fileInput exists before adding listener
+            fileInput.addEventListener('change', (event) => {
+                utils.clearPreviewsAndResults(); // Full reset when new files are chosen via input.
+                const currentInputFormat = document.getElementById('inputFormatSelect').value;
+                const newFiles = Array.from(event.target.files).filter(file => file.type === currentInputFormat);
 
-            utils.clearPreviewsAndResults(); // Clear everything first
-
-            if (newFiles.length === 0 && event.target.files.length > 0) {
-                utils.displayMessage(`Please select ${selectedFormat.split('/')[1].toUpperCase()} files only.`);
-                state.selectedFiles = []; // Clear selection
-                dropZonePlaceholder.classList.remove('hidden'); // Show placeholder
+                if (newFiles.length === 0 && event.target.files.length > 0) {
+                    utils.displayMessage(`Please select ${currentInputFormat.split('/')[1].toUpperCase()} files only.`);
+                // state.selectedFiles is already cleared by clearPreviewsAndResults
+                dropZonePlaceholder.classList.remove('hidden');
                 convertButton.disabled = true;
-                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Update to show "select images"
+                // previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Already shows placeholder due to empty selectedFiles
                 return;
             }
 
-            state.selectedFiles = newFiles; // Overwrite with new selection
+            state.selectedFiles = newFiles; // Set the new selection
 
             if (state.selectedFiles.length > 0) {
                 previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
                 convertButton.disabled = false;
-                dropZonePlaceholder.classList.add('hidden'); // Hide placeholder
+                dropZonePlaceholder.classList.add('hidden');
                 utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
             } else {
-                dropZonePlaceholder.classList.remove('hidden'); // Show placeholder if no files are valid or selected
+                dropZonePlaceholder.classList.remove('hidden');
                 convertButton.disabled = true;
-                 previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Update to show "select images"
+                // previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea); // Already shows placeholder
             }
         });
+
+        // Modify drop handler similarly
+        dropZoneArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZoneArea.classList.remove('border-blue-600', 'bg-blue-50');
+
+            utils.clearPreviewsAndResults(); // Full reset on new drop.
+
+            const droppedFiles = e.dataTransfer.files;
+            const currentInputFormat = document.getElementById('inputFormatSelect').value;
+            const newlySelectedFiles = Array.from(droppedFiles).filter(file => file.type === currentInputFormat);
+
+            if (newlySelectedFiles.length === 0 && droppedFiles.length > 0) {
+                utils.displayMessage(`Please drop ${currentInputFormat.split('/')[1].toUpperCase()} files only. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored.`);
+                dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                dropZonePlaceholder.classList.remove('hidden');
+                convertButton.disabled = true;
+                return;
+            }
+
+            state.selectedFiles = newlySelectedFiles; // Set new selection
+
+            if (state.selectedFiles.length > 0) {
+                previewHandlers.displayFilePreviews(state.selectedFiles, originalPreviewArea);
+                convertButton.disabled = false;
+                dropZonePlaceholder.classList.add('hidden');
+                utils.displayMessage(`${state.selectedFiles.length} file(s) selected. Ready to convert.`, false);
+
+                if (droppedFiles.length > newlySelectedFiles.length) {
+                     utils.displayMessage(`${newlySelectedFiles.length} valid file(s) selected. ${droppedFiles.length - newlySelectedFiles.length} file(s) were ignored as they were not ${selectedFormat.split('/')[1].toUpperCase()}.`, false);
+                }
+
+            } else { // No valid files dropped
+                dropZonePlaceholder.innerHTML = '<i class="fas fa-cloud-upload-alt text-4xl mb-3"></i><p class="text-lg">Drag & Drop images here</p><p class="text-sm">or use the selection button below</p>';
+                dropZonePlaceholder.classList.remove('hidden');
+                convertButton.disabled = true;
+            }
+        });
+
+
     } else {
         console.warn("Drop zone elements not found. Drag and drop functionality will not be available.");
     }

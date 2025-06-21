@@ -10,10 +10,18 @@
     <meta property="og:description" content="Professional tool to convert images between PNG, JPG and WEBP formats with custom quality settings">
     <meta property="og:type" content="website">
     <title>Bulk Image Converter Pro</title>
+    <!-- Favicon Links -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png">
+    <link rel="shortcut icon" href="/favicon/favicon.ico">
+    <!-- PWA Manifest and Theme Color -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#3b82f6">
+    <!-- Stylesheets -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/styles.css">
+    <!-- Scripts -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Image processing libraries -->
@@ -58,93 +66,44 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <!-- Input format -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <label for="inputFormatSelect" class="block text-sm font-medium text-gray-700 mb-2">
                             Input Format:
                             <span class="tooltip ml-1">
                                 <i class="fas fa-circle-info text-blue-500 text-xs"></i>
                                 <span class="tooltip-text">Select the format of the images you want to convert</span>
                             </span>
                         </label>
-                        <div class="flex flex-wrap gap-3">
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/png" checked class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">PNG</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/jpeg" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">JPEG</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/webp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">WEBP</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/tiff" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">TIFF</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/bmp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">BMP</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/gif" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">GIF</span>
-                            </label>
-                             <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/x-icon" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">ICO</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="inputFormat" value="image/svg+xml" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">SVG</span>
-                            </label>
-                        </div>
+                        <select id="inputFormatSelect" name="inputFormat" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                            <option value="image/png" selected>PNG</option>
+                            <option value="image/jpeg">JPEG</option>
+                            <option value="image/webp">WEBP</option>
+                            <option value="image/tiff">TIFF</option>
+                            <option value="image/bmp">BMP</option>
+                            <option value="image/gif">GIF</option>
+                            <option value="image/svg+xml">SVG</option>
+                            <option value="image/x-icon">ICO</option>
+                        </select>
                     </div>
                     
                     <!-- Output format -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <label for="outputFormatSelect" class="block text-sm font-medium text-gray-700 mb-2">
                             Output Format:
                             <span class="tooltip ml-1">
                                 <i class="fas fa-circle-info text-blue-500 text-xs"></i>
                                 <span class="tooltip-text">Choose the format you want to convert your images to</span>
                             </span>
                         </label>
-                        <div class="flex flex-wrap gap-3">
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/png" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">PNG</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/jpeg" checked class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">JPEG</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/webp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">WEBP</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/tiff" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">TIFF</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/bmp" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">BMP</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/gif" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">GIF</span>
-                            </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/x-icon" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">ICO</span>
-                            </label>
-                            <!-- SVG as output might be complex if input is raster; for now, let's assume direct conversion if input is SVG or skip for non-SVG inputs -->
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="outputFormat" value="image/svg+xml" class="form-radio h-4 w-4 text-blue-600 transition duration-150 ease-in-out">
-                                <span class="ml-2 text-sm text-gray-700">SVG</span>
-                            </label>
-                        </div>
+                        <select id="outputFormatSelect" name="outputFormat" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                            <option value="image/png">PNG</option>
+                            <option value="image/jpeg" selected>JPEG</option>
+                            <option value="image/webp">WEBP</option>
+                            <option value="image/tiff">TIFF</option>
+                            <option value="image/bmp">BMP</option>
+                            <option value="image/gif">GIF</option>
+                            <option value="image/svg+xml">SVG</option>
+                            <option value="image/x-icon">ICO</option>
+                        </select>
                     </div>
                 </div>
             </div>

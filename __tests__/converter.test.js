@@ -43,10 +43,11 @@ describe('js/converter.js - Main Thread Utilities', () => {
   let mockDownloadZipButton;
   let mockFileInput;
   let mockRenamingPattern;
-  let mockInputFormatRadios;
-  let mockOutputFormatRadios;
+  let mockInputFormatSelect;
+  let mockOutputFormatSelect;
   let mockQualitySlider;
-  let mockQualityLabel;
+  let mockQualityLabelContainer; // For the parent of qualitySlider and label
+  let mockQualityLabelItself; // For the label text
   let mockConvertButton;
 
   // Dynamically require converter.js to simulate its execution in jsdom
@@ -72,10 +73,18 @@ describe('js/converter.js - Main Thread Utilities', () => {
           <label id="qualityLabel">Quality:</label>
       </div>
       <button id="convertButton"></button>
-      <input type="radio" name="inputFormat" value="image/png" checked />
-      <input type="radio" name="inputFormat" value="image/jpeg" />
-      <input type="radio" name="outputFormat" value="image/jpeg" checked />
-      <input type="radio" name="outputFormat" value="image/png" />
+      <select id="inputFormatSelect">
+        <option value="image/png" selected>PNG</option>
+        <option value="image/jpeg">JPEG</option>
+        <option value="image/svg+xml">SVG</option>
+        <option value="image/tiff">TIFF</option>
+      </select>
+      <select id="outputFormatSelect">
+        <option value="image/jpeg" selected>JPEG</option>
+        <option value="image/png">PNG</option>
+        <option value="image/webp">WEBP</option>
+        <option value="image/svg+xml">SVG</option>
+      </select>
     `;
 
     // Now that DOM is set up, load (execute) converter.js
@@ -99,15 +108,17 @@ describe('js/converter.js - Main Thread Utilities', () => {
     mockProgressText = document.getElementById('progressText');
     mockFileInput = document.getElementById('fileInput');
     mockRenamingPattern = document.getElementById('renamingPattern');
-    mockInputFormatRadios = document.getElementsByName('inputFormat');
-    mockOutputFormatRadios = document.getElementsByName('outputFormat');
+    mockInputFormatSelect = document.getElementById('inputFormatSelect');
+    mockOutputFormatSelect = document.getElementById('outputFormatSelect');
     mockQualitySlider = document.getElementById('qualitySlider');
-    // mockQualityLabel = document.getElementById('qualityLabel'); // This is inside qualitySliderContainer
-    mockQualityLabel = qualitySlider.parentElement.querySelector('#qualityLabel');
+    mockQualityLabelContainer = mockQualitySlider.parentElement; // Assuming label is sibling or parent
+    mockQualityLabelItself = document.getElementById('qualityLabel');
     mockConvertButton = document.getElementById('convertButton');
 
 
     // Manually defining objects for testing based on converter.js structure
+    // This is a workaround for not being able to import directly.
+    // These definitions will need to be updated to match the new dropdown logic.
     // This is a workaround for not being able to import directly.
     utils = {
         displayMessage: (message, isError = true) => {
@@ -124,9 +135,9 @@ describe('js/converter.js - Main Thread Utilities', () => {
         // ... other utils if needed for tests
     };
 
-    converter = { // Assuming 'converter' is an object in converter.js
+    converter = {
         generateOutputFilename: (originalFileNameInput, index, outputFormatTypeParam) => {
-            const pattern = mockRenamingPattern.value || '{original}';
+            const pattern = mockRenamingPattern.value || '{original}'; // Uses the mocked DOM input
             let ext;
             const mimeToExt = {
                 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
@@ -136,8 +147,8 @@ describe('js/converter.js - Main Thread Utilities', () => {
 
             let actualOutputFormat = outputFormatTypeParam;
             if (!actualOutputFormat) {
-                const checkedRadio = Array.from(mockOutputFormatRadios).find(radio => radio.checked);
-                actualOutputFormat = checkedRadio ? checkedRadio.value : 'image/png';
+                // Use the mocked outputFormatSelect
+                actualOutputFormat = mockOutputFormatSelect ? mockOutputFormatSelect.value : 'image/png';
             }
             ext = mimeToExt[actualOutputFormat] || actualOutputFormat.split('/')[1] || 'bin';
             if (ext === 'jpeg') ext = 'jpg';
@@ -145,17 +156,92 @@ describe('js/converter.js - Main Thread Utilities', () => {
             if (ext === 'tiff') ext = 'tif';
             if (ext === 'x-icon') ext = 'ico';
 
-            const now = new Date(); // Consistent date for testing if needed, or mock Date
+            const now = new Date();
             let filename = pattern
-                .replace('{original}', originalFileNameInput.replace(/\.[^/.]+$/, ''))
-                .replace('{index}', String(index + 1).padStart(3, '0'))
-                .replace('{date}', now.toISOString().split('T')[0]) // Predictable date part
-                .replace('{time}', now.toTimeString().split(' ')[0].replace(/:/g, '-')); // Predictable time part
+                .replace('{original}', originalFileNameInput.replace(/\.[^/.]+$/, '')) // Uses originalFileNameInput from arg
+                .replace('{index}', String(index + 1).padStart(3, '0')) // Uses index from arg
+                .replace('{date}', now.toISOString().split('T')[0])
+                .replace('{time}', now.toTimeString().split(' ')[0].replace(/:/g, '-'));
             return `${filename}.${ext}`;
         }
-        // ... other converter methods if needed
     };
-     // Mock Date for consistent {date} and {time} in generateOutputFilename
+
+    // Define formatHandlers and its methods based on converter.js structure for testing
+    // This also requires formatCompatibility and formatDisplayNames to be defined in test scope
+    const formatCompatibility = {
+        'image/png': ['image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
+        'image/jpeg': ['image/png', 'image/webp', 'image/bmp', 'image/gif'],
+        'image/webp': ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'],
+        'image/tiff': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'],
+        'image/bmp': ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+        'image/gif': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp'],
+        'image/svg+xml': ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'],
+        'image/x-icon': ['image/png', 'image/jpeg', 'image/webp', 'image/bmp']
+    };
+    const formatDisplayNames = {
+        'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WEBP',
+        'image/bmp': 'BMP', 'image/gif': 'GIF', 'image/svg+xml': 'SVG',
+        'image/tiff': 'TIFF', 'image/x-icon': 'ICO'
+    };
+
+    formatHandlers = {
+        updateFileInputAccept: () => {
+            if (!mockInputFormatSelect || !mockFileInput) return;
+            const selectedFormat = mockInputFormatSelect.value;
+            let acceptString = selectedFormat;
+            if (selectedFormat === 'image/tiff') acceptString += ', .tif, .tiff';
+            else if (selectedFormat === 'image/bmp') acceptString += ', .bmp';
+            else if (selectedFormat === 'image/gif') acceptString += ', .gif';
+            else if (selectedFormat === 'image/x-icon') acceptString += ', .ico';
+            else if (selectedFormat === 'image/svg+xml') acceptString += ', .svg';
+            else if (selectedFormat === 'image/jpeg') acceptString += ', .jpg, .jpeg, .jfif, .pjpeg, .pjp';
+            else if (selectedFormat === 'image/png') acceptString += ', .png';
+            else if (selectedFormat === 'image/webp') acceptString += ', .webp';
+            mockFileInput.accept = acceptString;
+        },
+        updateQualitySliderVisibility: () => {
+            if (!mockOutputFormatSelect || !mockQualityLabelContainer || !mockQualityLabelItself) return;
+            const selectedFormat = mockOutputFormatSelect.value;
+            const qualitySensitiveFormats = ['image/jpeg', 'image/webp'];
+            if (qualitySensitiveFormats.includes(selectedFormat)) {
+                mockQualityLabelContainer.style.display = 'block';
+                mockQualityLabelItself.textContent = selectedFormat === 'image/jpeg' ? 'JPEG Quality:' : 'WebP Quality:';
+            } else {
+                mockQualityLabelContainer.style.display = 'none';
+            }
+        },
+        updateOutputFormatDropdown: () => {
+            if (!mockInputFormatSelect || !mockOutputFormatSelect) return;
+            const selectedInputFormat = mockInputFormatSelect.value;
+            const compatibleOutputs = formatCompatibility[selectedInputFormat] ||
+                                      Object.keys(formatDisplayNames).filter(k => k !== 'image/tiff' && k !== 'image/x-icon');
+            const currentOutputValue = mockOutputFormatSelect.value;
+            mockOutputFormatSelect.innerHTML = '';
+            compatibleOutputs.forEach(mimeType => {
+                if (formatDisplayNames[mimeType]) {
+                    const option = document.createElement('option');
+                    option.value = mimeType;
+                    option.textContent = formatDisplayNames[mimeType];
+                    mockOutputFormatSelect.appendChild(option);
+                }
+            });
+            if (compatibleOutputs.includes(currentOutputValue)) {
+                mockOutputFormatSelect.value = currentOutputValue;
+            } else if (compatibleOutputs.length > 0) {
+                if (selectedInputFormat !== 'image/jpeg' && compatibleOutputs.includes('image/jpeg')) {
+                    mockOutputFormatSelect.value = 'image/jpeg';
+                } else if (compatibleOutputs.includes('image/png')) {
+                    mockOutputFormatSelect.value = 'image/png';
+                } else {
+                    mockOutputFormatSelect.value = compatibleOutputs[0];
+                }
+            }
+            // Directly call the mocked/redefined version of updateQualitySliderVisibility
+            formatHandlers.updateQualitySliderVisibility();
+        }
+    };
+
+    // Mock Date for consistent {date} and {time} in generateOutputFilename
     const RealDate = Date;
     global.Date = class extends RealDate {
       constructor() {
@@ -210,76 +296,162 @@ describe('js/converter.js - Main Thread Utilities', () => {
 
   describe('converter.generateOutputFilename', () => {
     beforeEach(() => {
-      // Set default states for mocks before each test in this describe block
       mockRenamingPattern.value = '{original}_{index}';
-      // Uncheck all output format radios first
-      mockOutputFormatRadios.forEach(radio => radio.checked = false);
-      // Check JPEG as default output for tests if not specified otherwise
-      const jpegOutput = Array.from(mockOutputFormatRadios).find(r => r.value === 'image/jpeg');
-      if (jpegOutput) jpegOutput.checked = true;
+      mockOutputFormatSelect.value = 'image/jpeg'; // Default for tests
     });
 
-    test('should use original name and index', () => {
+    test('should use original name and index for default JPEG output', () => {
       const filename = converter.generateOutputFilename('testImage.png', 0);
-      expect(filename).toBe('testImage_001.jpg'); // Default output is jpg
+      expect(filename).toBe('testImage_001.jpg');
     });
 
-    test('should handle different output format (PNG)', () => {
-      const pngOutput = Array.from(mockOutputFormatRadios).find(r => r.value === 'image/png');
-      if (pngOutput) pngOutput.checked = true;
-      else throw new Error("PNG output radio not found for test setup");
-      const jpegOutput = Array.from(mockOutputFormatRadios).find(r => r.value === 'image/jpeg');
-      if (jpegOutput) jpegOutput.checked = false;
-
-
+    test('should handle different output format (PNG) from select', () => {
+      mockOutputFormatSelect.value = 'image/png';
       const filename = converter.generateOutputFilename('another.webp', 1);
       expect(filename).toBe('another_002.png');
     });
 
     test('should use date and time from mocked Date', () => {
         mockRenamingPattern.value = '{date}_{time}_{original}';
-        const filename = converter.generateOutputFilename('timedFile.bmp', 0);
-        // Date is mocked to 2023-10-26 10:00:00
-        expect(filename).toBe('2023-10-26_10-00-00_timedFile.jpg');
+        mockOutputFormatSelect.value = 'image/bmp';
+        const filename = converter.generateOutputFilename('timedFile.gif', 0);
+        expect(filename).toBe('2023-10-26_10-00-00_timedFile.bmp');
     });
 
-    test('should use default pattern if renamingPattern is empty', () => {
-      mockRenamingPattern.value = ''; // Empty pattern
-      const filename = converter.generateOutputFilename('default.gif', 2);
-      expect(filename).toBe('default_003.jpg'); // Assumes {original}_{index} effectively if pattern is empty and code defaults to {original} then adds index
-                                                // The provided code defaults to '{original}', so this test needs to match that.
-                                                // The provided code's generateOutputFilename: `const pattern = renamingPatternInput ? renamingPatternInput.value : '{original}';`
-                                                // If value is empty string, it's not null, so pattern becomes empty string.
-                                                // This needs clarification on how an "empty" pattern is treated.
-                                                // If pattern is empty string, filename becomes ".jpg" essentially.
-                                                // The provided code: `const pattern = renamingPatternInput ? renamingPatternInput.value : '{original}';`
-                                                // If `renamingPattern.value` is empty, then pattern becomes `"{original}"` due to `|| '{original}'` in the original code.
-                                                // Let's re-check the implemented mock version:
-                                                // `const pattern = mockRenamingPattern.value || '{original}';` -> This is correct.
-                                                // So if `mockRenamingPattern.value` is `''`, `pattern` becomes `'{original}'`.
-                                                // Then `filename` becomes `default.jpg`. The `{index}` part is not included by default.
-                                                // This means the test expectation should be 'default.jpg'.
-                                                // However, the current mock is: `const pattern = mockRenamingPattern.value || '{original}';`
-                                                // If mockRenamingPattern.value is '', pattern becomes '{original}'.
-                                                // The replace for index is: .replace('{index}', String(index + 1).padStart(3, '0'))
-                                                // This means if {index} is not in pattern, it's not added.
-                                                // The provided code for `generateOutputFilename` in `converter.js` is:
-                                                // `const pattern = renamingPattern.value || '{original}';`
-                                                // This is what the test should reflect.
-      expect(filename).toBe('default.jpg');
+    test('should use {original} pattern if renamingPattern is empty', () => {
+      mockRenamingPattern.value = '';
+      mockOutputFormatSelect.value = 'image/webp';
+      const filename = converter.generateOutputFilename('default.svg', 2);
+      expect(filename).toBe('default.webp');
     });
 
-    test('should handle complex pattern and different output type (WEBP)', () => {
+    test('should handle complex pattern and different output type (TIFF)', () => {
       mockRenamingPattern.value = 'Converted_{date}_{original}_{index}_image';
-      const webpOutput = Array.from(mockOutputFormatRadios).find(r => r.value === 'image/webp') ||
-                         (() => { const r = document.createElement('input'); r.type='radio'; r.name='outputFormat'; r.value='image/webp'; r.checked=true; document.body.appendChild(r); mockOutputFormatRadios = document.getElementsByName('outputFormat'); return r; })();
-      webpOutput.checked = true;
-      Array.from(mockOutputFormatRadios).find(r => r.value === 'image/jpeg').checked = false;
-
-      const filename = converter.generateOutputFilename('sourceFile.tiff', 4);
-      expect(filename).toBe('Converted_2023-10-26_sourceFile_005_image.webp');
+      mockOutputFormatSelect.value = 'image/tiff';
+      const filename = converter.generateOutputFilename('sourceFile.png', 4);
+      expect(filename).toBe('Converted_2023-10-26_sourceFile_005_image.tif');
     });
   });
 
-  // More tests could be added for other utilities, event handlers (more complex), etc.
+  describe('formatHandlers.updateFileInputAccept', () => {
+    test('should set correct accept string for PNG', () => {
+      mockInputFormatSelect.value = 'image/png';
+      formatHandlers.updateFileInputAccept();
+      expect(mockFileInput.accept).toBe('image/png, .png');
+    });
+
+    test('should set correct accept string for TIFF', () => {
+      mockInputFormatSelect.value = 'image/tiff';
+      formatHandlers.updateFileInputAccept();
+      expect(mockFileInput.accept).toBe('image/tiff, .tif, .tiff');
+    });
+  });
+
+  describe('formatHandlers.updateQualitySliderVisibility', () => {
+    test('should show slider for JPEG', () => {
+      mockOutputFormatSelect.value = 'image/jpeg';
+      formatHandlers.updateQualitySliderVisibility();
+      expect(mockQualityLabelContainer.style.display).toBe('block');
+      expect(mockQualityLabelItself.textContent).toBe('JPEG Quality:');
+    });
+
+    test('should show slider for WebP', () => {
+      mockOutputFormatSelect.value = 'image/webp';
+      formatHandlers.updateQualitySliderVisibility();
+      expect(mockQualityLabelContainer.style.display).toBe('block');
+      expect(mockQualityLabelItself.textContent).toBe('WebP Quality:');
+    });
+
+    test('should hide slider for PNG', () => {
+      mockOutputFormatSelect.value = 'image/png';
+      formatHandlers.updateQualitySliderVisibility();
+      expect(mockQualityLabelContainer.style.display).toBe('none');
+    });
+     test('should hide slider for GIF', () => {
+      mockOutputFormatSelect.value = 'image/gif';
+      formatHandlers.updateQualitySliderVisibility();
+      expect(mockQualityLabelContainer.style.display).toBe('none');
+    });
+  });
+
+  describe('formatHandlers.updateOutputFormatDropdown', () => {
+    let qualitySliderSpy;
+    beforeEach(() => {
+        // Spy on updateQualitySliderVisibility to check if it's called
+        // This requires formatHandlers to be an object whose methods can be spied on.
+        // Our current setup redefines formatHandlers, so this spy will work on the redefined version.
+        qualitySliderSpy = jest.spyOn(formatHandlers, 'updateQualitySliderVisibility');
+    });
+    afterEach(() => {
+        qualitySliderSpy.mockRestore();
+    });
+
+
+    test('should populate output formats compatible with PNG input', () => {
+      mockInputFormatSelect.value = 'image/png';
+      // Set an initial output that might change
+      mockOutputFormatSelect.value = 'image/webp';
+
+      formatHandlers.updateOutputFormatDropdown();
+
+      const expectedOutputs = formatCompatibility['image/png'];
+      expect(mockOutputFormatSelect.options.length).toBe(expectedOutputs.length);
+      expectedOutputs.forEach((mime, index) => {
+        expect(mockOutputFormatSelect.options[index].value).toBe(mime);
+        expect(mockOutputFormatSelect.options[index].textContent).toBe(formatDisplayNames[mime]);
+      });
+      // Check if selection was preserved or defaulted correctly
+      // PNG -> WEBP is compatible, so WEBP should remain selected.
+      expect(mockOutputFormatSelect.value).toBe('image/webp');
+      expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+
+    test('should populate output formats for SVG input, including SVG pass-through', () => {
+      mockInputFormatSelect.value = 'image/svg+xml';
+      mockOutputFormatSelect.value = 'image/jpeg'; // Initial output
+      formatHandlers.updateOutputFormatDropdown();
+
+      const expectedOutputs = formatCompatibility['image/svg+xml'];
+      expect(mockOutputFormatSelect.options.length).toBe(expectedOutputs.length);
+      expect(Array.from(mockOutputFormatSelect.options).some(opt => opt.value === 'image/svg+xml')).toBe(true);
+
+      // SVG -> JPEG is compatible, so JPEG should remain selected.
+      expect(mockOutputFormatSelect.value).toBe('image/jpeg');
+      expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+
+    test('should change selected output to a compatible default if previous is incompatible', () => {
+      // Setup: Input PNG, Output is currently SVG (which is not compatible with PNG output by our rules)
+      mockInputFormatSelect.value = 'image/png';
+      // Add SVG as an option and select it, even if it's not "compatible" for this setup
+      const svgOption = document.createElement('option');
+      svgOption.value = 'image/svg+xml';
+      svgOption.textContent = 'SVG_Test';
+      mockOutputFormatSelect.appendChild(svgOption);
+      mockOutputFormatSelect.value = 'image/svg+xml';
+
+      formatHandlers.updateOutputFormatDropdown(); // This should remove SVG and select a default for PNG input
+
+      // For PNG input, 'image/jpeg' is a preferred default if current (SVG) is incompatible
+      expect(mockOutputFormatSelect.value).toBe('image/jpeg');
+      expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+
+     test('should default to first compatible option if preferred defaults (JPEG/PNG) are not available', () => {
+      mockInputFormatSelect.value = 'image/bmp'; // BMP compatible with PNG, JPG, WEBP, GIF
+      // Let's assume formatCompatibility for BMP doesn't include JPG or PNG for this specific test case
+      // (Temporarily override formatCompatibility for this test, or ensure such a case)
+      const originalBmpCompat = formatCompatibility['image/bmp'];
+      formatCompatibility['image/bmp'] = ['image/webp', 'image/gif']; // Force WEBP or GIF
+
+      mockOutputFormatSelect.value = 'image/tiff'; // Set an incompatible initial output
+
+      formatHandlers.updateOutputFormatDropdown();
+
+      expect(mockOutputFormatSelect.value).toBe('image/webp'); // Should pick the first one: WEBP
+
+      formatCompatibility['image/bmp'] = originalBmpCompat; // Restore
+      expect(qualitySliderSpy).toHaveBeenCalled();
+    });
+  });
 });
